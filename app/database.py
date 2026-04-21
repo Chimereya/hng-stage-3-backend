@@ -26,6 +26,11 @@ else:
         pool_pre_ping=True,
     )
 
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set in your .env file")
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
