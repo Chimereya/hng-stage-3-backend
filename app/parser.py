@@ -114,14 +114,14 @@ STOPWORDS = {
 def get_country_id(phrase: str) -> str | None:
     """
     Try to match a word or phrase to an ISO country code.
-    Checks adjectives first, then uses pycountry for country names.
+    Checks adjectives first, then exact country name match via pycountry.
     """
     # Check adjectives map first
     if phrase in ADJECTIVES:
         return ADJECTIVES[phrase]
 
-    # Skip stopwords and very short words
-    if phrase in STOPWORDS or len(phrase) < 3:
+    # Skip stopwords and short words
+    if phrase in STOPWORDS or len(phrase) < 4:
         return None
 
     # Try direct alpha_2 code e.g. "ng", "ke"
@@ -130,13 +130,16 @@ def get_country_id(phrase: str) -> str | None:
         if result:
             return result.alpha_2
 
-    # Try pycountry fuzzy search for country names e.g. "nigeria", "kenya"
-    try:
-        results = pycountry.countries.search_fuzzy(phrase)
-        if results:
-            return results[0].alpha_2
-    except LookupError:
-        pass
+    # Exact name match only
+    # check common_name, name, and official_name
+    phrase_title = phrase.title()  # normalize to capitalize
+    for country in pycountry.countries:
+        if (
+            getattr(country, "name", "").lower() == phrase or
+            getattr(country, "common_name", "").lower() == phrase or
+            getattr(country, "official_name", "").lower() == phrase
+        ):
+            return country.alpha_2
 
     return None
 
@@ -161,7 +164,12 @@ def parse_query(q: str) -> dict | None:
     """
     if not q or not q.strip():
         return None
+    
+    # Reject queries that are too short to be meaningful
+    if len(q.strip()) < 3:
+        return None
 
+        
     text = q.lower().strip()
     filters = {}
 
