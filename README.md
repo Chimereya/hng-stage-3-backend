@@ -215,27 +215,95 @@ All errors follow this structure:
 }
 ```
 
-| Status Code | Meaning |
-|---|---|
-| `400` | Missing or empty parameter |
-| `422` | Invalid parameter type or value |
-| `404` | Profile not found |
-| `500` | Internal server error |
-| `502` | External API failure |
-
----
 
 ## Natural Language Query — How It Works
 
 The `/api/profiles/search` endpoint uses **rule-based parsing only** — no AI or LLMs at all.
 
-The parser (`app/parser.py`) works in this order:
-1. **Gender** — detects keywords like `male`, `females`, `men`, `women`
-2. **Age group** — detects `child`, `teenager`, `adult`, `senior`, `young` (maps to ages 16–24)
-3. **Age ranges** — detects phrases like `above 30`, `under 25`, `between 20 and 40`
-4. **Country** — checks nationality adjectives (`nigerian` → `NG`) then uses `pycountry` for country names (`nigeria` → `NG`)
+The parser (`app/parser.py`) works in this order and I tried tabulating so I and other readers won't get confused:
 
-If no filters can be extracted, returns `"Unable to interpret query"`.
+### 1. Gender Detection
+Matches whole words only to avoid false matches (something like "female" matching inside "females"):
+
+| Keywords | Maps To |
+|---|---|
+| `male`, `males`, `man`, `men` | `gender=male` |
+| `female`, `females`, `woman`, `women` | `gender=female` |
+| both male and female keywords present | no gender filter will be needed anymore |
+
+### 2. Age Group Detection
+| Keywords | Maps To |
+|---|---|
+| `young` | `min_age=16, max_age=24` |
+| `child`, `children` | `age_group=child` |
+| `teenager`, `teenagers`, `teen`, `teens` | `age_group=teenager` |
+| `adult`, `adults` | `age_group=adult` |
+| `senior`, `seniors`, `elderly` | `age_group=senior` |
+
+### 3. Age Range Detection
+Uses regex to extract numbers from natural phrases:
+
+| Pattern | Maps To |
+|---|---|
+| `above X`, `over X`, `older than X` | `min_age=X` |
+| `below X`, `under X`, `younger than X` | `max_age=X` |
+| `between X and Y` | `min_age=X, max_age=Y` |
+
+### 4. Country Detection
+Since the nationalize API powering endpoint `POST /api/profiles` only returns a 2-letter ISO country code (`"NG"`), and not country name, I applied python's `pycountry` library to handle country code conversion to country name(e.g.`"Nigeria"`) in the `services.py` and store it in the database when someone creates a profile.
+
+In `parser.py`, `pycountry` does the reverse. It converts country names 
+in a query like `"nigeria"` back to `"NG"` for database filtering.
+
+Also a dictionary of country adjectives was added in case of a country adjective like `nigerian`.
+
+1. **Adjectives map** — nationality words like `nigerian` → `NG`, `kenyan` → `KE`
+2. **pycountry exact match** — country names like `nigeria` → `NG`, `kenya` → `KE`
+
+Multi-word countries are tried longest-first to avoid partial matches
+(for instance: `"south africa"` is matched before `"africa"`).
+
+
+## The Parser Limitations & Edge Cases
+**1. Non-English queries not supported**
+The parser only understands English keywords.
+
+**2. No synonym support**
+Words like `"guys"`, `"ladies"`, `"boys"`, `"girls"` are not recognized. 
+Only the explicitly listed keywords above will work.
+
+**3. No correction for spelling**
+Spellings like `"nigerria"`, `"femalle"`, `"teeneger"` will not match anything and will therefore
+return `"Unable to interpret query"`.
+
+**4. query like young adults" contradicts itself**
+`"young adults"` sets `min_age=16, max_age=24` (from `young`) AND 
+`age_group=adult` (from `adults`) at the same time.
+
+**5. There is no context awareness**
+Beyond keyword spotting, the parser cannot understand sentence structure and each keyword is matched independently.
+
+**7. Uncommon nationality adjectives was not covered**
+Only adjectives explicitly listed in the `ADJECTIVES` dictionary are recognized.
+
+
+
+
+### Supported Query Examples
+
+| Query | Parsed As |
+|---|---|
+| `young males from nigeria` | `gender=male, min_age=16, max_age=24, country_id=NG` |
+| `females above 30` | `gender=female, min_age=30` |
+| `people from angola` | `country_id=AO` |
+| `adult males from kenya` | `gender=male, age_group=adult, country_id=KE` |
+| `male and female teenagers above 17` | `age_group=teenager, min_age=17` |
+| `seniors from egypt` | `age_group=senior, country_id=EG` |
+| `women under 25` | `gender=female, max_age=25` |
+| `men between 30 and 50` | `gender=male, min_age=30, max_age=50` |
+
+---
+
 
 ---
 
@@ -260,7 +328,7 @@ If no filters can be extracted, returns `"Unable to interpret query"`.
 
 The database is pre-seeded with 2,026 profiles from `seed_profiles.json`.
 
-To re-seed (Don't worry, it is safe to run multiple times — no duplicates created):
+To re-seed (it is safe to run multiple times — no duplicates created):
 ```bash
 python seed.py
 ```
