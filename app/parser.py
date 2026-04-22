@@ -166,14 +166,17 @@ def parse_query(q: str) -> dict | None:
     filters = {}
 
     # Gender
-    if any(w in text.split() for w in ["male", "males", "man", "men"]):
+    words = text.split()
+
+    if any(w in words for w in ["male", "males", "man", "men"]) and \
+    not any(w in words for w in ["female", "females", "woman", "women"]):
         filters["gender"] = "male"
-    elif any(w in text.split() for w in ["female", "females", "woman", "women"]):
+    elif any(w in words for w in ["female", "females", "woman", "women"]):
         filters["gender"] = "female"
 
-
-    # handle "male and female" — no gender filter will be needed if male/female exist
-    if "male" in text and "female" in text:
+    # handle "male and female" — no gender filter will be needed again if male or female is there
+    if any(w in words for w in ["male", "males"]) and \
+    any(w in words for w in ["female", "females"]):
         filters.pop("gender", None)
 
 
