@@ -15,6 +15,23 @@ Clients can filter, sort, paginate, and query profiles using natural language.
 
 ---
 
+## Project Structure
+
+### Updated stage 1 structure
+
+hng-stage-2/
+├── app/
+│   ├── __init__.py
+│   ├── main.py          # App initialization & endpoints
+│   ├── parser.py        # Rule-based natural language query logic
+│   ├── models.py        # SQLAlchemy database models
+│   ├── schemas.py       # Pydantic validation models
+│   ├── services.py      # External API calls (genderize, agify, nationalize)
+│   └── database.py      # DB connection & session management
+├── seed.py              # One-time database seeding script
+├── seed_profiles.json   # 2026 seed profiles
+├── .env                 # Environment variables (not committed of course)
+└── requirements.txt
 
 ---
 
