@@ -30,10 +30,9 @@ app.add_middleware(
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    status_val = str(exc.status_code) if exc.status_code == 502 else "error"
     return JSONResponse(
         status_code=exc.status_code,
-        content={"status": status_val, "message": str(exc.detail)},
+        content={"status": "error", "message": str(exc.detail)},
     )
 
 
