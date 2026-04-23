@@ -5,6 +5,19 @@ Clients can filter, sort, paginate, and query profiles using natural language.
 
 ---
 
+## Project Features
+
+- **Advanced Filtering** — filter profiles by gender, age group, country, 
+  age range, and probability scores
+- **Sorting** — sort results by age, created date, or gender probability 
+  in ascending or descending order
+- **Pagination** — all list endpoints support page and limit parameters
+- **Natural Language Search** — query profiles using plain English like 
+  "young males from nigeria" or "adult females above 30"
+- **Profile Creation** — create new profiles by name using demographic 
+  data from Genderize, Agify, and Nationalize APIs
+- **2,026 Seeded Profiles** — pre-loaded demographic dataset ready to query
+
 ## Tech Stack
 
 - **FastAPI** — API framework
@@ -304,8 +317,6 @@ Only adjectives explicitly listed in the `ADJECTIVES` dictionary are recognized.
 
 ---
 
-
----
 
 ## Database Schema
 
