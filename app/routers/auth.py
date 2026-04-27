@@ -149,3 +149,103 @@ async def github_callback(
     })
 
 
+@router.post("/refresh")
+def refresh_tokens(
+    request: Request,
+    db     : Session = Depends(get_db)
+):
+
+    # Try to get token from cli or web
+    refresh_token = None
+
+    # Check cookie first that is web portal
+    refresh_token = request.cookies.get("refresh_token")
+
+    # If not in cookie, check request body that is cli
+    if not refresh_token:
+        try:
+            import asyncio
+            body = asyncio.get_event_loop().run_until_complete(
+                request.json()
+            )
+            refresh_token = body.get("refresh_token")
+        except Exception:
+            pass
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "error", "message": "Refresh token required"}
+        )
+
+    
+    payload = verify_token(refresh_token, token_type="refresh")
+    user_id = payload.get("sub")
+
+    
+    db_token = db.query(RefreshToken).filter(
+        RefreshToken.token == refresh_token,
+        RefreshToken.is_revoked == False
+    ).first()
+
+    if not db_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"status": "error", "message": "Refresh token has been revoked"}
+        )
+
+    # Invalidate old token immediately
+    db_token.is_revoked = True
+    db.commit()
+
+    # Get the user
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"status": "error", "message": "User not found or deactivated"}
+        )
+
+    # Issue new token pair
+    token_data= {"sub": str(user.id), "role": user.role}
+    new_access_token  = create_access_token(token_data)
+    new_refresh_token = create_refresh_token(token_data)
+
+    # Save new refresh token
+    save_refresh_token(db, user.id, new_refresh_token)
+
+    return JSONResponse({
+        "status": "success",
+        "access_token" : new_access_token,
+        "refresh_token": new_refresh_token,
+    })
+
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    refresh_token = request.cookies.get("refresh_token")
+
+    if not refresh_token:
+        try:
+            body = await request.json()
+            refresh_token = body.get("refresh_token")
+        except Exception:
+            pass
+
+    if refresh_token:
+        db_token = db.query(RefreshToken).filter(
+            RefreshToken.token == refresh_token
+        ).first()
+        if db_token:
+            db_token.is_revoked = True
+            db.commit()
+
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
+
+    return {"status": "success", "message": "Logged out successfully"}
