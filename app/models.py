@@ -1,4 +1,7 @@
-from sqlalchemy import Column, String, Integer, Float, DateTime, Index
+from sqlalchemy import (
+    Column, String, Boolean, Integer,
+      Float, DateTime, Index, ForeignKey
+)
 from datetime import datetime, timezone
 from .database import Base
 from sqlalchemy.dialects.postgresql import UUID
