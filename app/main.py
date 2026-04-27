@@ -10,8 +10,12 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from .database import engine
-from . import models
+from . import models, database
 from .routers import auth, profiles
+from dotenv import load_dotenv
+
+
+load_dotenv() 
 
 
 logging.basicConfig(
@@ -27,7 +31,7 @@ logger = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 # Create tables on startup
-models.Base.metadata.create_all(bind=database.engine)
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Insighta Labs+")
 

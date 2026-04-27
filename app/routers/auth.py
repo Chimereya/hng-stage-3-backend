@@ -48,22 +48,44 @@ def generate_pkce_pair():
     return code_verifier, code_challenge
 
 
-def save_refresh_token(db: Session, user_id: str, token: str) -> None:
+def save_refresh_token(db: Session, user_id, token: str) -> None:
+    from datetime import timedelta
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     db_token = RefreshToken(
-        id = uuid.uuid4(),
         token = token,
         user_id = user_id,
-        expires_at= expires_at
+        expires_at = expires_at
     )
     db.add(db_token)
     db.commit()
 
 
+def get_or_create_user(db: Session, github_user: dict) -> User:
+    user = db.query(User).filter(
+        User.github_id == github_user["github_id"]
+    ).first()
+
+    if not user:
+        user = User(
+            github_id  = github_user["github_id"],
+            username = github_user["username"],
+            email = github_user["email"],
+            avatar_url = github_user["avatar_url"],
+            role = "analyst",
+            is_active  = True,
+        )
+        db.add(user)
+
+    # Update login timestamp
+    user.last_login_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+    return user
+
 
 @router.get("/github")
 @limiter.limit("10/minute")
-def github_login(source: str = "web"):
+def github_login(request: Request, source: str = "web"):
     
     state = secrets.token_urlsafe(32)
 
@@ -88,10 +110,10 @@ def github_login(source: str = "web"):
 async def github_callback(
     request : Request,
     response: Response,
-    code: str = None,
-    state: str = None,
-    db: Session = Depends(get_db)
-    ):
+    code : str = None,
+    state : str = None,
+    db : Session = Depends(get_db)
+):
     
     # validating state for csrf protection
     if not state or state not in pending_states:
@@ -162,7 +184,7 @@ async def github_callback(
 @limiter.limit("10/minute")
 def refresh_tokens(
     request: Request,
-    db     : Session = Depends(get_db)
+    db : Session = Depends(get_db)
 ):
 
     # Try to get token from cli or web
