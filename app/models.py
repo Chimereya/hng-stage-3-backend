@@ -12,7 +12,7 @@ from uuid6 import uuid7
 class Profile(Base):
     __tablename__ = "profiles"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String, primary_key=True, index=True, default=lambda: str(uuid7()))
     name = Column(String, unique=True, nullable=False, index=True)
     gender = Column(String, nullable=False)
     gender_probability = Column(Float, nullable=False)
@@ -39,15 +39,15 @@ class Profile(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid7)
-    github_id     = Column(String, unique=True, nullable=False)
-    username      = Column(String, nullable=False)
-    email         = Column(String, nullable=True)
-    avatar_url    = Column(String, nullable=True)
-    role          = Column(String, nullable=False, default="analyst")
-    is_active     = Column(Boolean, nullable=False, default=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    github_id = Column(String, unique=True, nullable=False)
+    username = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
+    role = Column(String, nullable=False, default="analyst")
+    is_active = Column(Boolean, nullable=False, default=True)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
-    created_at    = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 
@@ -55,9 +55,9 @@ class User(Base):
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
-    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid7)
-    token      = Column(String, unique=True, nullable=False)
-    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)    
+    token = Column(String, unique=True, nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_revoked = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime(timezone=True), nullable=False)
