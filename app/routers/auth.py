@@ -12,6 +12,10 @@ from ..auth import (
     create_refresh_token,
     verify_token
 )
+from ..dependencies import (
+    require_api_version,
+    get_current_user
+)
 from ..oauth import (
     get_github_auth_url,
     exchange_code_for_token,
@@ -282,3 +286,28 @@ async def logout(
     response.delete_cookie("refresh_token")
 
     return {"status": "success", "message": "Logged out successfully"}
+
+
+
+
+@router.get("/whoami")
+@limiter.limit("10/minute")
+def whoami(
+    request : Request,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns the currently authenticated user's info.
+    Used by the CLI to display who is logged in.
+    Requires a valid access token.
+    """
+    return {
+        "status": "success",
+        "data"  : {
+            "id"        : str(current_user.id),
+            "username"  : current_user.username,
+            "email"     : current_user.email,
+            "role"      : current_user.role,
+            "avatar_url": current_user.avatar_url,
+        }
+    }
