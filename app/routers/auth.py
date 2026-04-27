@@ -20,6 +20,13 @@ from ..oauth import (
 import uuid
 from uuid6 import uuid7
 import os
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+
+
+limiter = Limiter(key_func=get_remote_address)
+
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -55,6 +62,7 @@ def save_refresh_token(db: Session, user_id: str, token: str) -> None:
 
 
 @router.get("/github")
+@limiter.limit("10/minute")
 def github_login(source: str = "web"):
     
     state = secrets.token_urlsafe(32)
@@ -76,6 +84,7 @@ def github_login(source: str = "web"):
 
 # github will redirect to this endpoint after user authorizes the app
 @router.get("/github/callback")
+@limiter.limit("10/minute")
 async def github_callback(
     request : Request,
     response: Response,
@@ -150,6 +159,7 @@ async def github_callback(
 
 
 @router.post("/refresh")
+@limiter.limit("10/minute")
 def refresh_tokens(
     request: Request,
     db     : Session = Depends(get_db)
@@ -223,6 +233,7 @@ def refresh_tokens(
 
 
 @router.post("/logout")
+@limiter.limit("10/minute")
 async def logout(
     request: Request,
     response: Response,

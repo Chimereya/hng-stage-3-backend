@@ -2,13 +2,13 @@ import csv
 import io
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import asc, desc
 from ..database import get_db
 from ..models import Profile
-from ..schemas import ProfileCreate, ProfileResponse, PaginatedResponse
-from ..services import fetch_profile_data
+from ..schemas import ProfileCreate, ProfileResponse
+from ..services import get_profile_intelligence
 from ..parser import parse_query
 from ..dependencies import (
     require_admin,
@@ -103,81 +103,111 @@ def apply_sorting(query, sort_by: str = None, order: str = "desc"):
 # Endpoint for creating a new profile only meant for admin
 @router.post("/profiles", status_code=status.HTTP_201_CREATED)
 async def create_profile(
-    body: ProfileCreate,
-    db: Session = Depends(get_db),
-    current_user: User    = Depends(require_admin),
-    api_version_check : None    = Depends(require_api_version),
-    ):
-    
-    # Check if profile with this name already exists
+    body : ProfileCreate,
+    db : Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+    api_version_check: None = Depends(require_api_version),
+):
+    name_clean = body.name.lower().strip()
+
+    # Return existing profile if name already exists
     existing = db.query(Profile).filter(
-        Profile.name == body.name
+        Profile.name == name_clean
     ).first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"status": "error", "message": "Profile with this name already exists"}
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status" : "success",
+                "message": "Profile already exists",
+                "data"   : serialize_profile(existing)
+            }
         )
 
-    # Fetch data from genderize, agify, nationalize
-    profile_data = await fetch_profile_data(body.name)
-
-    # Save to DB
-    profile = Profile(**profile_data)
+    # Fetch from genderize, agify, nationalize
+    intel = await get_profile_intelligence(name_clean)
+    profile = Profile(name=name_clean, **intel)
     db.add(profile)
     db.commit()
     db.refresh(profile)
 
-    return {
-        "status": "success",
-        "data"  : ProfileResponse.model_validate(profile)
-    }
-
+    return JSONResponse(
+        status_code=201,
+        content={"status": "success", "data": serialize_profile(profile)}
+    )
 
 
 
 @router.get("/profiles")
 def list_profiles(
     db : Session = Depends(get_db),
-    current_user: User = Depends(require_analyst),
+    current_user : User = Depends(require_analyst),
     api_version_check: None = Depends(require_api_version),
     gender : str = Query(None),
-    country : str = Query(None),
-    age_group: str = Query(None),
-    min_age: int = Query(None),
-    max_age : int = Query(None),
-    sort_by : str = Query("created_at"),
+    age_group : str = Query(None),
+    country_id : str = Query(None),
+    min_age : int = Query(None),
+    max_age: int = Query(None),
+    min_gender_probability  : float= Query(None, ge=0.0, le=1.0),
+    min_country_probability : float= Query(None, ge=0.0, le=1.0),
+    sort_by: str = Query(None),
     order : str = Query("desc"),
     page : int = Query(1, ge=1),
-    limit : int = Query(10, ge=1, le=100),
+    limit : int = Query(10, ge=1, le=50),
 ):
+    
+
+    # Validate inputs
+    if sort_by and sort_by not in VALID_SORT_FIELDS:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+    if order and order not in VALID_ORDERS:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+    if gender and gender.lower() not in VALID_GENDERS:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+    if age_group and age_group.lower() not in VALID_AGE_GROUPS:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+
     query = db.query(Profile)
-
-    # Applying the filters
-    query = apply_filters(query, gender, country, age_group, min_age, max_age)
-
-    # Applying sorting
-    sort_column = getattr(Profile, sort_by, Profile.created_at)
-    query = query.order_by(
-        desc(sort_column) if order == "desc" else asc(sort_column)
+    query = apply_filters(
+        query,
+        gender  = gender,
+        age_group = age_group,
+        country_id = country_id,
+        min_age  = min_age,
+        max_age = max_age,
+        min_gender_probability  = min_gender_probability,
+        min_country_probability = min_country_probability,
     )
+    query = apply_sorting(query, sort_by, order)
 
-    # Getting the total count before pagination
     total = query.count()
-
-    # Applying pagination
     profiles = query.offset((page - 1) * limit).limit(limit).all()
     total_pages = (total + limit - 1) // limit
 
-    return {
-        "status" : "success",
-        "page": page,
-        "limit": limit,
-        "total" : total,
-        "total_pages": total_pages,
-        "links" : build_links("/api/profiles", page, limit, total),
-        "data": [ProfileResponse.model_validate(p) for p in profiles]
-    }
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status" : "success",
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": total_pages,
+            "links" : build_links("/api/profiles", page, limit, total),
+            "data": [serialize_profile(p) for p in profiles],
+        }
+    )
 
 
 
@@ -185,21 +215,20 @@ def list_profiles(
 @router.get("/profiles/export")
 def export_profiles(
     db : Session = Depends(get_db),
-    current_user: User    = Depends(require_analyst),
-    api_version_check : None    = Depends(require_api_version),
-    format : str = Query("csv"),
-    gender: str = Query(None),
-    country : str = Query(None),
-    age_group: str= Query(None),
+    current_user: User  = Depends(require_analyst),
+    api_version_check: None = Depends(require_api_version),
+    format : str= Query("csv"),
+    gender : str = Query(None),
+    country_id : str= Query(None),
+    age_group : str = Query(None),
     min_age : int = Query(None),
-    max_age : int  = Query(None),
-    sort_by: str = Query("created_at"),
-    order: str  = Query("desc"),
+    max_age : int= Query(None),
+    min_gender_probability  : float  = Query(None),
+    min_country_probability : float = Query(None),
+    sort_by : str = Query("created_at"),
+    order: str = Query("desc"),
 ):
-    """
-    Exporting profiles as a CSV file.
-
-    """
+    """Exports profiles as a CSV file with same filters as list."""
     if format != "csv":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -207,27 +236,27 @@ def export_profiles(
         )
 
     query = db.query(Profile)
-    query = apply_filters(query, gender, country, age_group, min_age, max_age)
-
-    sort_column = getattr(Profile, sort_by, Profile.created_at)
-    query = query.order_by(
-        desc(sort_column) if order == "desc" else asc(sort_column)
+    query = apply_filters(
+        query,
+        gender  = gender,
+        age_group = age_group,
+        country_id = country_id,
+        min_age = min_age,
+        max_age = max_age,
+        min_gender_probability = min_gender_probability,
+        min_country_probability = min_country_probability,
     )
-
+    query = apply_sorting(query, sort_by, order)
     profiles = query.all()
 
     # Build CSV in memory
-    output  = io.StringIO()
-    writer  = csv.writer(output)
-
-    # Write header row
+    output = io.StringIO()
+    writer = csv.writer(output)
     writer.writerow([
         "id", "name", "gender", "gender_probability",
         "age", "age_group", "country_id", "country_name",
         "country_probability", "created_at"
     ])
-
-    # Write data rows
     for p in profiles:
         writer.writerow([
             str(p.id), p.name, p.gender, p.gender_probability,
@@ -237,17 +266,13 @@ def export_profiles(
         ])
 
     output.seek(0)
-
-    # Generate filename with timestamp
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename  = f"profiles_{timestamp}.csv"
 
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode()),
-        media_type ="text/csv",
-        headers ={
-            "Content-Disposition": f"attachment; filename={filename}"
-        }
+        media_type = "text/csv",
+        headers    = {"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 
@@ -258,49 +283,59 @@ def search_profiles(
     db : Session = Depends(get_db),
     current_user: User = Depends(require_analyst),
     api_version_check: None = Depends(require_api_version),
-    q : str = Query(..., description="Natural language search query"),
-    page : int  = Query(1, ge=1),
-    limit : int = Query(10, ge=1, le=100),
+    q: str = Query(None),
+    page : int = Query(1, ge=1),
+    limit : int = Query(10, ge=1, le=50),
 ):
-    
+    if not q or not q.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
 
-    filters = parse_query(q)
+    filters = parse_query(q.strip())
+    if filters is None:
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Unable to interpret query"}
+        )
 
     query = db.query(Profile)
     query = apply_filters(
         query,
         gender = filters.get("gender"),
-        country = filters.get("country_id"),
         age_group = filters.get("age_group"),
+        country_id = filters.get("country_id"),
         min_age = filters.get("min_age"),
         max_age = filters.get("max_age"),
     )
 
-    total       = query.count()
-    profiles    = query.offset((page - 1) * limit).limit(limit).all()
+    total = query.count()
+    profiles = query.offset((page - 1) * limit).limit(limit).all()
     total_pages = (total + limit - 1) // limit
 
-    return {
-        "status" : "success",
-        "page" : page,
-        "limit": limit,
-        "total": total,
-        "total_pages": total_pages,
-        "links": build_links("/api/profiles/search", page, limit, total),
-        "data": [ProfileResponse.model_validate(p) for p in profiles]
-    }
-
-
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "page" : page,
+            "limit" : limit,
+            "total" : total,
+            "total_pages": total_pages,
+            "links" : build_links("/api/profiles/search", page, limit, total),
+            "data": [serialize_profile(p) for p in profiles],
+        }
+    )
 
 
 @router.get("/profiles/{profile_id}")
 def get_profile(
-    profile_id  : str,
-    db : Session = Depends(get_db),
+    profile_id : str,
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_analyst),
     api_version_check: None = Depends(require_api_version),
 ):
-
+    """Returns a single profile by ID."""
     profile = db.query(Profile).filter(
         Profile.id == profile_id
     ).first()
@@ -311,17 +346,19 @@ def get_profile(
             detail={"status": "error", "message": "Profile not found"}
         )
 
-    return {"status": "success", "data": ProfileResponse.model_validate(profile)}
+    return JSONResponse(
+        status_code=200,
+        content={"status": "success", "data": serialize_profile(profile)}
+    )
 
 
 
-
-@router.delete("/profiles/{profile_id}")
+@router.delete("/profiles/{profile_id}", status_code=204)
 def delete_profile(
     profile_id  : str,
-    db          : Session = Depends(get_db),
-    current_user: User    = Depends(require_admin),
-    api_version_check: None    = Depends(require_api_version),
+    db : Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+    api_version_check: None = Depends(require_api_version),
 ):
     
     profile = db.query(Profile).filter(
@@ -337,4 +374,4 @@ def delete_profile(
     db.delete(profile)
     db.commit()
 
-    return {"status": "success", "message": "Profile deleted successfully"}
+    return None
