@@ -78,3 +78,16 @@ def require_analyst(current_user: User = Depends(get_current_user)) -> User:
             detail={"status": "error", "message": "Access denied"}
         )
     return current_user
+
+
+# Checking API version
+def require_api_version(x_api_version: str = Header(None)) -> None:
+    
+    if x_api_version is None or x_api_version != "1":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "status": "error",
+                "message": "API version header required"
+            }
+        )
