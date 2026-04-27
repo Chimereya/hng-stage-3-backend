@@ -19,6 +19,29 @@ from ..models import User
 
 router = APIRouter(prefix="/api", tags=["Profiles"])
 
+VALID_SORT_FIELDS = ["age", "created_at", "gender_probability"]
+VALID_ORDERS      = ["asc", "desc"]
+VALID_GENDERS     = ["male", "female"]
+VALID_AGE_GROUPS  = ["child", "teenager", "adult", "senior"]
+
+
+
+def serialize_profile(profile: Profile) -> dict:
+    """Serializing a profile model to a dictionary."""
+    created_at = profile.created_at
+    ts = created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if created_at else None
+    return {
+        "id" : str(profile.id),
+        "name" : profile.name,
+        "gender": profile.gender,
+        "gender_probability"  : round(float(profile.gender_probability), 2),
+        "age" : profile.age,
+        "age_group": profile.age_group,
+        "country_id" : profile.country_id,
+        "country_name" : profile.country_name,
+        "country_probability" : round(float(profile.country_probability), 2),
+        "created_at" : ts,
+    }
 
 
 def build_links(base_url: str, page: int, limit: int, total: int) -> dict:
@@ -36,21 +59,46 @@ def build_links(base_url: str, page: int, limit: int, total: int) -> dict:
 
 
 
-def apply_filters(query, gender, country, age_group, min_age, max_age):
+def apply_filters(
+    query,
+    gender= None,
+    age_group= None,
+    country_id = None,
+    min_age = None,
+    max_age = None,
+    min_gender_probability = None,
+    min_country_probability = None,
+):
     
     if gender:
-        query = query.filter(Profile.gender == gender)
-    if country:
-        query = query.filter(Profile.country_id == country)
+        query = query.filter(Profile.gender == gender.lower())
     if age_group:
-        query = query.filter(Profile.age_group == age_group)
+        query = query.filter(Profile.age_group == age_group.lower())
+    if country_id:
+        query = query.filter(Profile.country_id == country_id.upper())
     if min_age is not None:
         query = query.filter(Profile.age >= min_age)
     if max_age is not None:
         query = query.filter(Profile.age <= max_age)
+    if min_gender_probability is not None:
+        query = query.filter(Profile.gender_probability >= min_gender_probability)
+    if min_country_probability is not None:
+        query = query.filter(Profile.country_probability >= min_country_probability)
     return query
 
 
+def apply_sorting(query, sort_by: str = None, order: str = "desc"):
+    valid_fields = {
+        "age" : Profile.age,
+        "created_at": Profile.created_at,
+        "gender_probability": Profile.gender_probability,
+    }
+    if sort_by and sort_by in valid_fields:
+        column = valid_fields[sort_by]
+        query  = query.order_by(
+            column.desc() if order == "desc" else column.asc()
+        )
+    return query
 
 # Endpoint for creating a new profile only meant for admin
 @router.post("/profiles", status_code=status.HTTP_201_CREATED)
