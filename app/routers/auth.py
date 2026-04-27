@@ -18,6 +18,7 @@ from ..oauth import (
     get_github_user
 )
 import uuid
+from uuid6 import uuid7
 import os
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])

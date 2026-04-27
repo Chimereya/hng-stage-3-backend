@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from .database import Base
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
+from uuid6 import uuid7
 
 
 class Profile(Base):
@@ -38,7 +39,7 @@ class Profile(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid7)
     github_id     = Column(String, unique=True, nullable=False)
     username      = Column(String, nullable=False)
     email         = Column(String, nullable=True)
@@ -54,7 +55,7 @@ class User(Base):
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
-    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid7)
     token      = Column(String, unique=True, nullable=False)
     user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     is_revoked = Column(Boolean, default=False)
