@@ -311,3 +311,55 @@ def whoami(
             "avatar_url": current_user.avatar_url,
         }
     }
+
+
+
+@router.post("/cli/callback")
+@limiter.limit("10/minute")
+async def cli_callback(
+    request: Request,
+    db : Session = Depends(get_db)
+):
+    """
+    CLI-specific callback endpoint.
+    Accepts code + code_verifier as JSON body.
+    Returns tokens as JSON.
+    """
+    body = await request.json()
+    code = body.get("code")
+    code_verifier = body.get("code_verifier")
+
+    if not code or not code_verifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"status": "error", "message": "code and code_verifier required"}
+        )
+
+    # Exchange code for GitHub token
+    github_token = await exchange_code_for_token(code, code_verifier)
+
+    # Fetch GitHub user info
+    github_user = await get_github_user(github_token)
+
+    # Create or update user in DB
+    user = get_or_create_user(db, github_user)
+
+    # Issue tokens
+    token_data    = {"sub": str(user.id), "role": user.role}
+    access_token  = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+
+    # Save refresh token
+    save_refresh_token(db, user.id, refresh_token)
+
+    return JSONResponse({
+        "status" : "success",
+        "access_token" : access_token,
+        "refresh_token": refresh_token,
+        "user" : {
+            "username": user.username,
+            "email": user.email,
+            "role" : user.role,
+            "avatar_url": user.avatar_url,
+        }
+    })
