@@ -118,7 +118,6 @@ async def github_callback(
     state : str = None,
     db : Session = Depends(get_db)
 ):
-    
     # validating state for csrf protection
     if not state or state not in pending_states:
         raise HTTPException(
@@ -126,41 +125,29 @@ async def github_callback(
             detail={"status": "error", "message": "Invalid or expired state"}
         )
 
-    stored= pending_states.pop(state)
+    stored  = pending_states.pop(state)
     code_verifier = stored["code_verifier"]
-    source = stored["source"]
+    source  = stored["source"]
 
-    # then w'll exchange the code for an access token from github
+    # exchange the code for an access token from github
     github_token = await exchange_code_for_token(code, code_verifier)
 
-    # fetching user info from github using the access token
+    # fetch user info from github
     github_user = await get_github_user(github_token)
-
-    user = get_or_create_user(db, github_user)
+    user  = get_or_create_user(db, github_user)
 
     # issue our own jwt tokens
     token_data = {"sub": str(user.id), "role": user.role}
-    access_token = create_access_token(token_data)
+    access_token  = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
 
-    # Saving refresh token to the database
+    # save refresh token to the database
     save_refresh_token(db, user.id, refresh_token)
 
-    # if the source is web, we set the tokens in httpOnly cookies and redirect to frontend dashboard
     if source == "web":
         redirect_response = RedirectResponse(
-            url        = f"{FRONTEND_URL}/dashboard",
-            status_code= 302
-        )
-        redirect_response.set_cookie(...)
-        redirect_response.set_cookie(...)
-        return redirect_response
-
-    
-    if source == "web":
-        redirect_response = RedirectResponse(
-            url        = f"{FRONTEND_URL}/dashboard",
-            status_code= 302
+            url=f"{FRONTEND_URL}/dashboard",
+            status_code=302
         )
         redirect_response.set_cookie(...)
         redirect_response.set_cookie(...)
@@ -169,7 +156,12 @@ async def github_callback(
     if source == "cli":
         cli_redirect = (
             f"http://localhost:8484/callback"
-            f"?code={code}"
+            f"?access_token={access_token}"
+            f"&refresh_token={refresh_token}"
+            f"&username={user.username}"
+            f"&email={user.email}"
+            f"&role={user.role}"
+            f"&avatar_url={user.avatar_url}"
             f"&state={state}"
         )
         return RedirectResponse(cli_redirect)
@@ -178,7 +170,6 @@ async def github_callback(
         {"status": "error", "message": "Invalid or missing source parameter"},
         status_code=400
     )
-
 
 
 
