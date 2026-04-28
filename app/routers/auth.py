@@ -85,90 +85,147 @@ def get_or_create_user(db: Session, github_user: dict) -> User:
 
 @router.get("/github")
 @limiter.limit("10/minute")
-def github_login(request: Request, source: str = "web", db: Session = Depends(get_db)):
-    state = secrets.token_urlsafe(32)
-    code_verifier, code_challenge = generate_pkce_pair()
+def github_login(
+    request: Request, 
+    source: str = "web", 
+    state: str = None,  # Accept state from CLI
+    code_challenge: str = None, # Accept challenge from CLI
+    db: Session = Depends(get_db)
+):
+    final_state = state or secrets.token_urlsafe(32)
+    
+    if source == "web":
+        code_verifier, challenge = generate_pkce_pair()
+    else:
+     
+        code_verifier = "cli_controlled" 
+        challenge = code_challenge
 
-    # Store in DB instead of memory
-    db.add(PendingState(state=state, code_verifier=code_verifier, source=source))
+    db.add(PendingState(state=final_state, code_verifier=code_verifier, source=source))
     db.commit()
 
-    auth_url = get_github_auth_url(state, code_challenge)
+    auth_url = get_github_auth_url(final_state, challenge)
     return RedirectResponse(auth_url)
 
 # github will redirect to this endpoint after user authorizes the app
-@router.get("/github/callback")
-@limiter.limit("10/minute")
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
+import httpx
+
+# Assuming these are imported from your existing auth logic
+from .database import get_db
+from .models import User, PendingState
+from .security import create_access_token, create_refresh_token, save_refresh_token
+
+router = APIRouter()
+
+@router.get("/auth/github/callback")
 async def github_callback(
-    request : Request,
-    response: Response,
-    code : str = None,
-    state : str = None,
-    db : Session = Depends(get_db)
+    request: Request,
+    code: str = None,
+    state: str = None,
+    db: Session = Depends(get_db)
 ):
-    # Clean up expired states older than 10 minutes
-    db.query(PendingState).filter(
-        PendingState.created_at < datetime.utcnow() - timedelta(minutes=10)
-    ).delete()
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    # 1. Validate State & Retrieve PKCE Verifier
+    stored_state = db.query(PendingState).filter(PendingState.state == state).first()
+    if not stored_state:
+        raise HTTPException(status_code=400, detail="Invalid or expired state")
+    
+    code_verifier = stored_state.code_verifier
+    source = stored_state.source
+    
+    # Cleanup state immediately (one-time use)
+    db.delete(stored_state)
     db.commit()
 
-    # Validate state for CSRF protection
-    stored = db.query(PendingState).filter(PendingState.state == state).first()
-
-    if not state or not stored:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"status": "error", "message": "Invalid or expired state"}
+    # 2. Exchange Code for GitHub Access Token
+    async with httpx.AsyncClient() as client:
+        token_res = await client.post(
+            "https://github.com/login/oauth/access_token",
+            params={
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": GITHUB_CLIENT_SECRET,
+                "code": code,
+                "code_verifier": code_verifier, # Required for PKCE
+                "redirect_uri": GITHUB_REDIRECT_URI
+            },
+            headers={"Accept": "application/json"}
         )
+        token_data = token_res.json()
+        gh_access_token = token_data.get("access_token")
 
-    code_verifier = stored.code_verifier
-    source        = stored.source
+        # 3. Fetch GitHub User Profile
+        user_res = await client.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"token {gh_access_token}"}
+        )
+        github_user = user_res.json()
 
-    # Delete after use (one-time use)
-    db.delete(stored)
+    # 4. Sync User in DB (Ensure UUID v7 is used for new users)
+    user = db.query(User).filter(User.github_id == str(github_user['id'])).first()
+    if not user:
+        user = User(
+            github_id=str(github_user['id']),
+            username=github_user.get('login'),
+            email=github_user.get('email'),
+            avatar_url=github_user.get('avatar_url'),
+            role="analyst" # Default role
+        )
+        db.add(user)
+    
+    # MANDATORY: Check if user is active
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    user.last_login_at = datetime.utcnow()
     db.commit()
 
-    # Exchange the code for an access token from github
-    github_token = await exchange_code_for_token(code, code_verifier)
+    # 5. Issue Insighta Platform Tokens
+    # Access Token: 3 mins (180s) | Refresh Token: 5 mins (300s)
+    token_payload = {"sub": str(user.id), "role": user.role}
+    access_token = create_access_token(token_payload, expires_delta=timedelta(minutes=3))
+    refresh_token = create_refresh_token(token_payload, expires_delta=timedelta(minutes=5))
 
-    # Fetch user info from github
-    github_user = await get_github_user(github_token)
-    user        = get_or_create_user(db, github_user)
-
-    # Issue our own jwt tokens
-    token_data    = {"sub": str(user.id), "role": user.role}
-    access_token  = create_access_token(token_data)
-    refresh_token = create_refresh_token(token_data)
-
-    # Save refresh token to the database
+    # Store refresh token for invalidation tracking
     save_refresh_token(db, user.id, refresh_token)
 
-    if source == "web":
-        redirect_response = RedirectResponse(
-            url=f"{FRONTEND_URL}/dashboard",
-            status_code=302
-        )
-        redirect_response.set_cookie(...)
-        redirect_response.set_cookie(...)
-        return redirect_response
-
+    # 6. Interface-Specific Response
     if source == "cli":
-        cli_redirect = (
-            f"http://localhost:8484/callback"
-            f"?access_token={access_token}"
-            f"&refresh_token={refresh_token}"
-            f"&username={user.username}"
-            f"&email={user.email}"
-            f"&role={user.role}"
-            f"&avatar_url={user.avatar_url}"
-            f"&state={state}"
+        # Redirect to the CLI's local server (port 8484 as per your CLI code)
+        cli_loopback_url = (
+            f"http://localhost:8484/callback?"
+            f"access_token={access_token}&"
+            f"refresh_token={refresh_token}&"
+            f"username={user.username}&"
+            f"role={user.role}&"
+            f"state={state}"
         )
-        return RedirectResponse(cli_redirect)
+        return RedirectResponse(url=cli_loopback_url)
 
-    return JSONResponse(
-        {"status": "error", "message": "Invalid or missing source parameter"},
-        status_code=400
-    )
+    else:
+        # Web Portal: Set Secure, HttpOnly cookies
+        response = RedirectResponse(url=f"{FRONTEND_URL}/dashboard")
+        response.set_cookie(
+            key="access_token", 
+            value=access_token, 
+            httponly=True, 
+            secure=True, 
+            samesite="lax"
+        )
+        # Refresh token should also be HttpOnly
+        response.set_cookie(
+            key="refresh_token", 
+            value=refresh_token, 
+            httponly=True, 
+            secure=True, 
+            samesite="lax"
+        )
+        return response
 
 @router.post("/refresh")
 @limiter.limit("10/minute")
