@@ -1,5 +1,6 @@
 import os
 import httpx
+from urllib.parse import urlencode
 from fastapi import HTTPException, status
 
 
@@ -14,31 +15,32 @@ GITHUB_USER_URL      = "https://api.github.com/user"
 GITHUB_EMAILS_URL    = "https://api.github.com/user/emails"
 
 
-# Building the github auth URL manually to avoid issues with urlencode and PKCE parameters
+
 def get_github_auth_url(state: str, code_challenge: str) -> str:
-    """
-    state means random string to prevent CSRF attacks
-    """
+    if not GITHUB_CLIENT_ID or not GITHUB_REDIRECT_URI:
+        raise ValueError("GitHub OAuth environment variables not set")
+
     params = {
         "client_id": GITHUB_CLIENT_ID,
         "redirect_uri": GITHUB_REDIRECT_URI,
         "scope": "read:user user:email",
         "state": state,
         "code_challenge": code_challenge,
-        "code_challenge_method" : "S256",
+        "code_challenge_method": "S256",
     }
 
-    query = "&".join(f"{k}={v}" for k, v in params.items())
-    return f"{GITHUB_AUTHORIZE_URL}?{query}"
+    return f"{GITHUB_AUTHORIZE_URL}?{urlencode(params)}"
 
+
+# ----------------------------------------------------------------
+# EXCHANGE CODE FOR TOKEN
+# ----------------------------------------------------------------
 
 async def exchange_code_for_token(code: str, code_verifier: str) -> str:
-    """
-    After GitHub redirects me back with a code,
-    it is exchanged for a GitHub access token.
+    if not code:
+        raise HTTPException(400, "Authorization code is required")
 
-    """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
             GITHUB_TOKEN_URL,
             headers={"Accept": "application/json"},
@@ -46,19 +48,27 @@ async def exchange_code_for_token(code: str, code_verifier: str) -> str:
                 "client_id": GITHUB_CLIENT_ID,
                 "client_secret": GITHUB_CLIENT_SECRET,
                 "code": code,
-                "redirect_uri" : GITHUB_REDIRECT_URI,
+                "redirect_uri": GITHUB_REDIRECT_URI,
                 "code_verifier": code_verifier,
+            },
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "message": "Failed to communicate with GitHub"
             }
         )
 
     data = response.json()
 
-    
-    if "error" in data:
+    if "error" in data or "access_token" not in data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "status" : "error",
+                "status": "error",
                 "message": data.get("error_description", "GitHub OAuth failed")
             }
         )
@@ -66,43 +76,47 @@ async def exchange_code_for_token(code: str, code_verifier: str) -> str:
     return data["access_token"]
 
 
-# Fetching the user github profile using the acess token.
+# ----------------------------------------------------------------
+# FETCH USER DATA
+# ----------------------------------------------------------------
 
 async def get_github_user(access_token: str) -> dict:
-   
-    async with httpx.AsyncClient() as client:
-        # Getting basic profile
-        user_response = await client.get(
-            GITHUB_USER_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept"       : "application/json"
+    if not access_token:
+        raise HTTPException(400, "Access token required")
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json"
+    }
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        user_response = await client.get(GITHUB_USER_URL, headers=headers)
+        email_response = await client.get(GITHUB_EMAILS_URL, headers=headers)
+
+    if user_response.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "message": "Failed to fetch GitHub user profile"
             }
         )
 
-        
-        email_response = await client.get(
-            GITHUB_EMAILS_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept" : "application/json"
-            }
-        )
+    user_data = user_response.json()
 
-    user_data  = user_response.json()
-    email_data = email_response.json()
-
-    # here i'm trying to extract primary and verified email from the list of emails returned by github.
+    # Emails endpoint can fail or be empty
     email = None
-    if isinstance(email_data, list):
-        for e in email_data:
-            if e.get("primary") and e.get("verified"):
-                email = e.get("email")
-                break
+    if email_response.status_code == 200:
+        email_data = email_response.json()
+        if isinstance(email_data, list):
+            for e in email_data:
+                if e.get("primary") and e.get("verified"):
+                    email = e.get("email")
+                    break
 
     return {
-        "github_id" : str(user_data["id"]),
-        "username"  : user_data["login"],
-        "email"     : email or user_data.get("email"),
+        "github_id": str(user_data.get("id")),
+        "username": user_data.get("login"),
+        "email": email or user_data.get("email"),
         "avatar_url": user_data.get("avatar_url"),
     }

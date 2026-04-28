@@ -19,9 +19,7 @@ def create_access_token(data: dict) -> str:
     payload = data.copy()
     expire  = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload.update({"exp": expire, "type": "access"})
-    print("DEBUG payload:", payload)
-    print("DEBUG SECRET_KEY inside function:", repr(SECRET_KEY))
-    print("DEBUG ALGORITHM:", repr(ALGORITHM))
+  
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def create_refresh_token(data: dict) -> str:

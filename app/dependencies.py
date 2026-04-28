@@ -1,34 +1,54 @@
-from fastapi import Depends, HTTPException, Header, status
+from fastapi import Depends, HTTPException, Header, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+
 from .database import get_db
 from .models import User
 from .auth import verify_token
 
 
-# This tells fastapi to look for a bearer token in the Authorization header
-bearer_scheme = HTTPBearer()
+# ----------------------------------------------------------------
+# AUTH SCHEME
+# ----------------------------------------------------------------
+
+bearer_scheme = HTTPBearer(auto_error=False)
+# auto_error=False allows fallback to cookies (for web)
 
 
-
+# ----------------------------------------------------------------
+# CURRENT USER
+# ----------------------------------------------------------------
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db)
 ) -> User:
     """
-    Extracts and validates the JWT token from the
-    Authorization header, then returns the current user.
-
-    Every protected endpoint will use this dependency.
+    Supports BOTH:
+    - CLI → Authorization: Bearer <token>
+    - Web → HTTP-only cookies
     """
-    # Extract the token from the Authorization header
-    token = credentials.credentials
 
-    # Verify the token and get the payload
+    token = None
+
+    # Try Authorization header (CLI)
+    if credentials:
+        token = credentials.credentials
+
+    # Fallback to cookies (Web)
+    if not token:
+        token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"status": "error", "message": "Authentication required"}
+        )
+
+    # Verify token
     payload = verify_token(token, token_type="access")
 
-    # Get the user ID from the token payload
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(
@@ -36,15 +56,14 @@ def get_current_user(
             detail={"status": "error", "message": "Invalid token payload"}
         )
 
-    # Look up the user in the database
     user = db.query(User).filter(User.id == user_id).first()
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"status": "error", "message": "User not found"}
         )
 
-    # Check if user account is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -54,11 +73,11 @@ def get_current_user(
     return user
 
 
-# Adding role enforcement to the dependency
-
+# ----------------------------------------------------------------
+# ROLE-BASED ACCESS CONTROL
+# ----------------------------------------------------------------
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    
     if current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -69,10 +88,9 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
 
 def require_analyst(current_user: User = Depends(get_current_user)) -> User:
     """
-    Allows both admin and analyst users through.
-    
+    Allows both admin and analyst users.
     """
-    if current_user.role not in ["admin", "analyst"]:
+    if current_user.role not in ("admin", "analyst"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"status": "error", "message": "Access denied"}
@@ -80,14 +98,13 @@ def require_analyst(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-# Checking API version
+
 def require_api_version(x_api_version: str = Header(None)) -> None:
-    
-    if x_api_version is None or x_api_version != "1":
+    """
+    Enforces: X-API-Version: 1
+    """
+    if x_api_version != "1":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "status": "error",
-                "message": "API version header required"
-            }
+            detail={"status": "error", "message": "API version header required"}
         )

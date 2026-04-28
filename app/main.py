@@ -36,30 +36,30 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Insighta Labs+")
 
 # Attaching the rate limiter to app
-app.state.limiter = limiter
+app.state.limiter = Limiter(key_func=get_remote_address)
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173"],
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials = True,
 )
 
 app.add_middleware(SlowAPIMiddleware)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """
-    Logs every request with:
-     Method,
-     Endpoint,
-     Status code,
-     Response time
-    """
     start_time = time.time()
-    response = await call_next(request)
+
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        logger.error(
+            f"{request.method} {request.url.path} → ERROR {e}"
+        )
+        raise
+
     duration = round((time.time() - start_time) * 1000, 2)
 
     logger.info(
@@ -67,6 +67,7 @@ async def log_requests(request: Request, call_next):
         f"→ {response.status_code} "
         f"({duration}ms)"
     )
+
     return response
 
 
