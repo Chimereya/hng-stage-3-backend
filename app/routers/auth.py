@@ -37,10 +37,6 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
-# Temporary in-memory store for state and code_verifier
-pending_states: dict = {}
-
-
 
 
 def generate_pkce_pair():
