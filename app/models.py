@@ -61,3 +61,12 @@ class RefreshToken(Base):
     is_revoked = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class PendingState(Base):
+    __tablename__ = "pending_states"
+
+    state         = Column(String, primary_key=True)
+    code_verifier = Column(String, nullable=False)
+    source        = Column(String, nullable=False)
+    created_at    = Column(DateTime, default=datetime.utcnow)

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import User, RefreshToken
+from ..models import User, RefreshToken, PendingState
 from ..auth import (
     create_access_token,
     create_refresh_token,
@@ -89,24 +89,16 @@ def get_or_create_user(db: Session, github_user: dict) -> User:
 
 @router.get("/github")
 @limiter.limit("10/minute")
-def github_login(request: Request, source: str = "web"):
-    
+def github_login(request: Request, source: str = "web", db: Session = Depends(get_db)):
     state = secrets.token_urlsafe(32)
-
-    # Generate PKCE pair for web flow
     code_verifier, code_challenge = generate_pkce_pair()
 
-    # i'm gonna store state and code_verifier temporarily in a dictionary.
-    pending_states[state] = {
-        "code_verifier": code_verifier,
-        "source": source
-    }
+    # Store in DB instead of memory
+    db.add(PendingState(state=state, code_verifier=code_verifier, source=source))
+    db.commit()
 
     auth_url = get_github_auth_url(state, code_challenge)
     return RedirectResponse(auth_url)
-
-
-
 
 # github will redirect to this endpoint after user authorizes the app
 @router.get("/github/callback")
@@ -118,30 +110,41 @@ async def github_callback(
     state : str = None,
     db : Session = Depends(get_db)
 ):
-    # validating state for csrf protection
-    if not state or state not in pending_states:
+    # Clean up expired states older than 10 minutes
+    db.query(PendingState).filter(
+        PendingState.created_at < datetime.utcnow() - timedelta(minutes=10)
+    ).delete()
+    db.commit()
+
+    # Validate state for CSRF protection
+    stored = db.query(PendingState).filter(PendingState.state == state).first()
+
+    if not state or not stored:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"status": "error", "message": "Invalid or expired state"}
         )
 
-    stored  = pending_states.pop(state)
-    code_verifier = stored["code_verifier"]
-    source  = stored["source"]
+    code_verifier = stored.code_verifier
+    source        = stored.source
 
-    # exchange the code for an access token from github
+    # Delete after use (one-time use)
+    db.delete(stored)
+    db.commit()
+
+    # Exchange the code for an access token from github
     github_token = await exchange_code_for_token(code, code_verifier)
 
-    # fetch user info from github
+    # Fetch user info from github
     github_user = await get_github_user(github_token)
-    user  = get_or_create_user(db, github_user)
+    user        = get_or_create_user(db, github_user)
 
-    # issue our own jwt tokens
-    token_data = {"sub": str(user.id), "role": user.role}
+    # Issue our own jwt tokens
+    token_data    = {"sub": str(user.id), "role": user.role}
     access_token  = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
 
-    # save refresh token to the database
+    # Save refresh token to the database
     save_refresh_token(db, user.id, refresh_token)
 
     if source == "web":
@@ -170,8 +173,6 @@ async def github_callback(
         {"status": "error", "message": "Invalid or missing source parameter"},
         status_code=400
     )
-
-
 
 @router.post("/refresh")
 @limiter.limit("10/minute")
