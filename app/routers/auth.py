@@ -149,48 +149,45 @@ async def github_callback(
     # if the source is web, we set the tokens in httpOnly cookies and redirect to frontend dashboard
     if source == "web":
         redirect_response = RedirectResponse(
-            url = f"{FRONTEND_URL}/dashboard",
-            status_code=302
+            url        = f"{FRONTEND_URL}/dashboard",
+            status_code= 302
         )
-        redirect_response.set_cookie(
-            key = "access_token",
-            value = access_token,
-            httponly = True,
-            secure = True,
-            samesite = "lax", 
-            max_age = 180 
-        )
-        redirect_response.set_cookie(
-            key = "refresh_token",
-            value = refresh_token,
-            httponly = True,
-            secure = True,
-            samesite = "lax",
-            max_age = 300
-        )
+        redirect_response.set_cookie(...)
+        redirect_response.set_cookie(...)
         return redirect_response
 
-    # the cli flow returns as json format
-    return JSONResponse({
-        "status": "success",
-        "access_token" : access_token,
-        "refresh_token": refresh_token,
-        "user": {
-            "username" : user.username,
-            "email" : user.email,
-            "role" : user.role,
-            "avatar_url": user.avatar_url,
-        }
-    })
+    
+    if source == "web":
+        redirect_response = RedirectResponse(
+            url        = f"{FRONTEND_URL}/dashboard",
+            status_code= 302
+        )
+        redirect_response.set_cookie(...)
+        redirect_response.set_cookie(...)
+        return redirect_response
+
+    if source == "cli":
+        cli_redirect = (
+            f"http://localhost:8484/callback"
+            f"?code={code}"
+            f"&state={state}"
+        )
+        return RedirectResponse(cli_redirect)
+
+    return JSONResponse(
+        {"status": "error", "message": "Invalid or missing source parameter"},
+        status_code=400
+    )
+
+
 
 
 @router.post("/refresh")
 @limiter.limit("10/minute")
 def refresh_tokens(
     request: Request,
-    db : Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-
     # Try to get token from cli or web
     refresh_token = None
 
@@ -200,34 +197,33 @@ def refresh_tokens(
     # If not in cookie, check request body that is cli
     if not refresh_token:
         try:
-            import asyncio
-            body = asyncio.get_event_loop().run_until_complete(
-                request.json()
-            )
+            body = request.json()
             refresh_token = body.get("refresh_token")
         except Exception:
-            pass
+            refresh_token = None
 
     if not refresh_token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"status": "error", "message": "Refresh token required"}
+            detail={"status": "error", "message": "Refresh token required"},
         )
 
-    
     payload = verify_token(refresh_token, token_type="refresh")
     user_id = payload.get("sub")
 
-    
-    db_token = db.query(RefreshToken).filter(
-        RefreshToken.token == refresh_token,
-        RefreshToken.is_revoked == False
-    ).first()
+    db_token = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.token == refresh_token,
+            RefreshToken.is_revoked == False,
+        )
+        .first()
+    )
 
     if not db_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"status": "error", "message": "Refresh token has been revoked"}
+            detail={"status": "error", "message": "Refresh token has been revoked"},
         )
 
     # Invalidate old token immediately
@@ -239,23 +235,24 @@ def refresh_tokens(
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"status": "error", "message": "User not found or deactivated"}
+            detail={"status": "error", "message": "User not found or deactivated"},
         )
 
     # Issue new token pair
-    token_data= {"sub": str(user.id), "role": user.role}
-    new_access_token  = create_access_token(token_data)
+    token_data = {"sub": str(user.id), "role": user.role}
+    new_access_token = create_access_token(token_data)
     new_refresh_token = create_refresh_token(token_data)
 
     # Save new refresh token
     save_refresh_token(db, user.id, new_refresh_token)
 
-    return JSONResponse({
-        "status": "success",
-        "access_token" : new_access_token,
-        "refresh_token": new_refresh_token,
-    })
-
+    return JSONResponse(
+        {
+            "status": "success",
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
+        }
+    )
 
 
 @router.post("/logout")
