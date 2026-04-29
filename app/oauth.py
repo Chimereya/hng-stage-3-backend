@@ -36,45 +36,28 @@ def get_github_auth_url(state: str, code_challenge: str) -> str:
 # EXCHANGE CODE FOR TOKEN
 # ----------------------------------------------------------------
 
-import httpx
-from fastapi import HTTPException, status
-
-async def exchange_code_for_token(code: str, code_verifier: str = None) -> str:
+async def exchange_code_for_token(code: str, code_verifier: str) -> str:
     if not code:
         raise HTTPException(400, "Authorization code is required")
-
-    # Base payload
-    data = {
-        "client_id": GITHUB_CLIENT_ID,
-        "client_secret": GITHUB_CLIENT_SECRET,
-        "code": code,
-        "redirect_uri": GITHUB_REDIRECT_URI,
-    }
-
-    if code_verifier:
-        data["code_verifier"] = code_verifier
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
             GITHUB_TOKEN_URL,
             headers={"Accept": "application/json"},
-            data=data,
-        )
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "status": "error",
-                "message": "Failed to communicate with GitHub",
+            data={
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": GITHUB_CLIENT_SECRET,
+                "code": code,
+                "redirect_uri": GITHUB_REDIRECT_URI,
+                "code_verifier": code_verifier,
             },
         )
 
     data = response.json()
 
-    if "error" in data or "access_token" not in data:
+    if response.status_code != 200 or "access_token" not in data:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail={
                 "status": "error",
                 "message": data.get("error_description", "GitHub OAuth failed"),
