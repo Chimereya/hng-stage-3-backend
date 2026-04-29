@@ -4,8 +4,6 @@ from sqlalchemy import (
 )
 from datetime import datetime, timezone
 from .database import Base
-from sqlalchemy.dialects.postgresql import UUID
-import uuid
 from uuid6 import uuid7
 
 
@@ -66,7 +64,7 @@ class RefreshToken(Base):
 class PendingState(Base):
     __tablename__ = "pending_states"
 
-    state         = Column(String, primary_key=True)
+    state = Column(String, primary_key=True)
     code_verifier = Column(String, nullable=False)
-    source        = Column(String, nullable=False)
-    created_at    = Column(DateTime, default=datetime.utcnow)
+    source = Column(String, nullable=False)
+    created_at  = Column(DateTime, default=datetime.now(timezone.utc))

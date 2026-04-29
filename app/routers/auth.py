@@ -3,8 +3,7 @@ import secrets
 import hashlib
 import base64
 from datetime import datetime, timezone, timedelta
-
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -179,7 +178,7 @@ async def refresh_tokens(
 
     db_token = db.query(RefreshToken).filter(
         RefreshToken.token == refresh_token,
-        RefreshToken.is_revoked == False,
+        RefreshToken.is_revoked.is_(False),
     ).first()
 
     if not db_token:

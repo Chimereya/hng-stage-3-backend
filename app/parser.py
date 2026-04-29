@@ -130,9 +130,7 @@ def get_country_id(phrase: str) -> str | None:
         if result:
             return result.alpha_2
 
-    # Exact name match only
-    # check common_name, name, and official_name
-    phrase_title = phrase.title()  # normalize to capitalize
+    
     for country in pycountry.countries:
         if (
             getattr(country, "name", "").lower() == phrase or
