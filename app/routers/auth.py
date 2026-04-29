@@ -72,9 +72,9 @@ def get_or_create_user(db: Session, github_user: dict) -> User:
 @limiter.limit("10/minute")
 def github_login(
     request: Request,
-    source: str = Query("web"),         
-    state: str = Query(None),            
-    code_challenge: str = Query(None), 
+    source: str = "web",
+    state: str = None,
+    code_challenge: str = None,
     db: Session = Depends(get_db),
 ):
     final_state = state or secrets.token_urlsafe(32)
@@ -82,16 +82,15 @@ def github_login(
     if source == "web":
         code_verifier, challenge = generate_pkce_pair()
     else:
+        # CLI provides its own code_challenge derived from its code_verifier
         if not code_challenge:
             raise HTTPException(400, "code_challenge required for CLI flow")
-
-        code_verifier = ""   
+        code_verifier = ""   # CLI holds verifier locally
         challenge = code_challenge
 
     db.add(PendingState(
         state=final_state,
         code_verifier=code_verifier,
-        code_challenge=challenge,   # ADD THIS
         source=source,
     ))
     db.commit()
