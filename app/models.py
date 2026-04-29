@@ -1,16 +1,20 @@
 from sqlalchemy import (
     Column, String, Boolean, Integer,
-      Float, DateTime, Index, ForeignKey
+    Float, DateTime, Index, ForeignKey
 )
 from datetime import datetime, timezone
 from .database import Base
 from uuid6 import uuid7
 
 
+def _uuid7_str():
+    return str(uuid7())
+
+
 class Profile(Base):
     __tablename__ = "profiles"
 
-    id = Column(String, primary_key=True, index=True, default=lambda: str(uuid7()))
+    id = Column(String, primary_key=True, index=True, default=_uuid7_str)
     name = Column(String, unique=True, nullable=False, index=True)
     gender = Column(String, nullable=False)
     gender_probability = Column(Float, nullable=False)
@@ -32,12 +36,10 @@ class Profile(Base):
     )
 
 
-
-
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    id = Column(String, primary_key=True, default=_uuid7_str)
     github_id = Column(String, unique=True, nullable=False)
     username = Column(String, nullable=False)
     email = Column(String, nullable=True)
@@ -45,19 +47,23 @@ class User(Base):
     role = Column(String, nullable=False, default="analyst")
     is_active = Column(Boolean, nullable=False, default=True)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
 
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)    
+    id = Column(String, primary_key=True, default=_uuid7_str)
     token = Column(String, unique=True, nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
     is_revoked = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -67,4 +73,7 @@ class PendingState(Base):
     state = Column(String, primary_key=True)
     code_verifier = Column(String, nullable=False)
     source = Column(String, nullable=False)
-    created_at  = Column(DateTime, default=datetime.now(timezone.utc))
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
