@@ -12,7 +12,7 @@ GITHUB_USER_URL      = "https://api.github.com/user"
 GITHUB_EMAILS_URL    = "https://api.github.com/user/emails"
 
 
-def get_github_auth_url(state: str, code_challenge: str) -> str:
+def get_github_auth_url(state: str, code_challenge: str = None) -> str:
     if not GITHUB_CLIENT_ID or not GITHUB_REDIRECT_URI:
         raise ValueError("GitHub OAuth environment variables not set")
     params = {
@@ -20,9 +20,12 @@ def get_github_auth_url(state: str, code_challenge: str) -> str:
         "redirect_uri": GITHUB_REDIRECT_URI,
         "scope": "read:user user:email",
         "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
     }
+    # Only include PKCE params for web flow
+    if code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
+
     return f"{GITHUB_AUTHORIZE_URL}?{urlencode(params)}"
 
 
