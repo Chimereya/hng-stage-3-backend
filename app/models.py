@@ -70,9 +70,8 @@ class RefreshToken(Base):
 class PendingState(Base):
     __tablename__ = "pending_states"
 
-    state = Column(String, primary_key=True)
+    state = Column(String, primary_key=True, index=True)
     code_verifier = Column(String, nullable=True)
-    code_challenge = Column(String, nullable=True) 
     source = Column(String, nullable=False)
     created_at = Column(
         DateTime(timezone=True),
