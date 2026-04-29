@@ -9,8 +9,8 @@ The core API powering the Insighta Labs+ Profile Intelligence Platform.
 
 ## Live URLs
 
-- **Backend API:** [https://hng-stage-3-backend-git-feat-stage-3-chimereyas-projects.vercel.app](https://insighta-frontend-nu.vercel.app/)
-- **Web Portal:** [https://your-vercel-frontend-url.vercel.app](https://insighta-frontend-nu.vercel.app/)
+- **Backend API:**[ [https://hng-stage-3-backend.vercel.app](https://hng-stage-3-backend.vercel.app/)]
+- **Web Portal:** [https://insighta-frontend-nu.vercel.app](https://insighta-frontend-nu.vercel.app/)
 
 ---
 
