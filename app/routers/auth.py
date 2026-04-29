@@ -102,7 +102,6 @@ def github_login(
 # OAUTH CALLBACK
 # GET /auth/github/callback
 # ----------------------------------------------------------------
-
 @router.get("/github/callback")
 @limiter.limit("10/minute")
 async def github_callback(
@@ -114,6 +113,7 @@ async def github_callback(
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
 
+    # 1. Verify the State
     stored = db.query(PendingState).filter(PendingState.state == state).first()
     if not stored:
         raise HTTPException(400, "Invalid or expired state")
@@ -121,50 +121,60 @@ async def github_callback(
     code_verifier = stored.code_verifier
     source = stored.source
 
+    # Cleanup the state from DB immediately
     db.delete(stored)
     db.commit()
 
+    # 2. Exchange code for GitHub Token & User Info
     github_token = await exchange_code_for_token(code, code_verifier)
     github_user = await get_github_user(github_token)
 
+    # 3. Handle User Record
     user = get_or_create_user(db, github_user)
 
     if not user.is_active:
         raise HTTPException(403, "Account is deactivated")
 
+    # 4. Generate Internal App Tokens
     token_payload = {"sub": str(user.id), "role": user.role}
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token(token_payload)
 
+    # Save refresh token for rotation/revocation logic
     save_refresh_token(db, str(user.id), refresh_token)
 
+    # 5. Handle CLI Flow (Tokens in URL)
     if source == "cli":
         return RedirectResponse(
             f"http://localhost:8484/callback"
             f"?access_token={access_token}&refresh_token={refresh_token}"
         )
 
-    response = RedirectResponse(f"{FRONTEND_URL}/dashboard")
+    # 6. Handle WEB Flow (Tokens in HttpOnly Cookies)
+    # Redirect to dashboard without tokens in the URL to keep it clean/secure
+    response = RedirectResponse(url=f"{FRONTEND_URL}/dashboard")
+
+    # Access Token Cookie (180s expiry per HNG rules)
     response.set_cookie(
-        "access_token",
-        access_token,
+        key="access_token",
+        value=access_token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=True,     # Required for SameSite="none"
+        samesite="none", # Required for cross-site Vercel deployments
         max_age=180,
     )
+
+    # Refresh Token Cookie (300s expiry per HNG rules)
     response.set_cookie(
-        "refresh_token",
-        refresh_token,
+        key="refresh_token",
+        value=refresh_token,
         httponly=True,
         secure=True,
         samesite="none",
         max_age=300,
     )
-    return RedirectResponse(
-        f"{FRONTEND_URL}/dashboard"
-        f"?access_token={access_token}&refresh_token={refresh_token}"
-    )
+
+    return response
 
 # ----------------------------------------------------------------
 # REFRESH TOKENS
