@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from .limiter import limiter          # ← single shared instance
+from .limiter import limiter 
 from .database import engine
 from . import models
 from .routers import auth, profiles
@@ -28,8 +28,6 @@ app = FastAPI(title="Insighta Labs+")
 
 # ----------------------------------------------------------------
 # RATE LIMITER
-# Attach the SAME limiter instance that decorators reference.
-# SlowAPIMiddleware reads from app.state.limiter — they must match.
 # ----------------------------------------------------------------
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
