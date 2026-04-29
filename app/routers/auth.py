@@ -128,25 +128,39 @@ async def github_callback(
     github_user = await get_github_user(github_token)
 
     user = get_or_create_user(db, github_user)
+
     if not user.is_active:
         raise HTTPException(403, "Account is deactivated")
 
     token_payload = {"sub": str(user.id), "role": user.role}
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token(token_payload)
+
     save_refresh_token(db, str(user.id), refresh_token)
 
     if source == "cli":
-        # Redirect back to the CLI's local callback server
         return RedirectResponse(
             f"http://localhost:8484/callback"
             f"?access_token={access_token}&refresh_token={refresh_token}"
         )
 
-    # Web: set HTTP-only cookies
     response = RedirectResponse(f"{FRONTEND_URL}/dashboard")
-    response.set_cookie("access_token", access_token, httponly=True, secure=True, samesite="lax")
-    response.set_cookie("refresh_token", refresh_token, httponly=True, secure=True, samesite="lax")
+    response.set_cookie(
+        "access_token",
+        access_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=180,
+    )
+    response.set_cookie(
+        "refresh_token",
+        refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=300,
+    )
     return response
 
 
@@ -235,8 +249,8 @@ async def logout(
             db_token.is_revoked = True
             db.commit()
 
-    response.delete_cookie("access_token")
-    response.delete_cookie("refresh_token")
+    response.delete_cookie("access_token", httponly=True, secure=True, samesite="none")
+    response.delete_cookie("refresh_token", httponly=True, secure=True, samesite="none")
 
     return {"status": "success", "message": "Logged out successfully"}
 
