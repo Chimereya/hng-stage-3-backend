@@ -114,19 +114,20 @@ async def github_callback(
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
 
-    # 1. Verify the State
     stored = db.query(PendingState).filter(PendingState.state == state).first()
     if not stored:
         raise HTTPException(400, "Invalid or expired state")
-
-    code_verifier = stored.code_verifier
+    
     source = stored.source
-
-    # Cleanup the state from DB immediately
+    
+    if source == "cli":
+        code_verifier = None
+    else:
+        code_verifier = stored.code_verifier
+    
     db.delete(stored)
     db.commit()
-
-    # 2. Exchange code for GitHub Token & User Info
+    
     github_token = await exchange_code_for_token(code, code_verifier)
     github_user = await get_github_user(github_token)
 
