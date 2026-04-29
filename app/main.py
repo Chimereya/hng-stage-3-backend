@@ -6,8 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-
-from .limiter import limiter 
+from .limiter import limiter
 from .database import engine
 from . import models
 from .routers import auth, profiles
@@ -45,9 +44,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 app.add_middleware(SlowAPIMiddleware)
-
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -64,22 +61,18 @@ async def log_requests(request: Request, call_next):
     )
     return response
 
-
 # ----------------------------------------------------------------
 # EXCEPTION HANDLERS
 # ----------------------------------------------------------------
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = exc.errors()
     status_code = 422
     message = "Invalid query parameters"
-
     for error in errors:
         error_msg = error.get("msg", "")
         error_type = error.get("type", "")
         error_loc = error.get("loc", [])
-
         if error_type == "missing" and error_loc and error_loc[-1] == "name":
             status_code = 400
             message = "Missing or empty name"
@@ -88,12 +81,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             status_code = 400
             message = "Missing or empty name"
             break
-
     return JSONResponse(
         status_code=status_code,
         content={"status": "error", "message": message},
     )
-
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
@@ -103,13 +94,11 @@ async def general_exception_handler(request: Request, exc: Exception):
         content={"status": "error", "message": "Internal server error"},
     )
 
-
 # ----------------------------------------------------------------
 # ROUTERS
 # ----------------------------------------------------------------
 app.include_router(auth.router)
 app.include_router(profiles.router)
-
 
 @app.get("/")
 def root():
