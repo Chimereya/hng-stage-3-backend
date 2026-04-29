@@ -40,7 +40,7 @@ Note:*This diagram represents the full Insighta ecosystem. This repository handl
 
 #### The platform is split into three independent parts:
 
-GitHub OAuth -> FastAPI Backend (Python) -> Client:React Web Portal (this repo) and CLI
+GitHub OAuth -> FastAPI Backend (Python) -> Client:React Web Portal and CLI
 
 
 
