@@ -161,8 +161,10 @@ async def github_callback(
         samesite="none",
         max_age=300,
     )
-    return response
-
+    return RedirectResponse(
+        f"{FRONTEND_URL}/dashboard"
+        f"?access_token={access_token}&refresh_token={refresh_token}"
+    )
 
 # ----------------------------------------------------------------
 # REFRESH TOKENS
