@@ -141,6 +141,7 @@ async def github_callback(
             f"?access_token={access_token}&refresh_token={refresh_token}"
             f"&username={user.username}&email={user.email or ''}"
             f"&role={user.role}&avatar_url={user.avatar_url or ''}"
+            f"&state={state}"
         )
 
     response = RedirectResponse(url=f"{FRONTEND_URL}/dashboard")
