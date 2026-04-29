@@ -40,13 +40,10 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
 # ----------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://insighta-frontend-nu.vercel.app",
-    ],
+    allow_origins=["https://insighta-frontend-nu.vercel.app"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
 )
 
 app.add_middleware(SlowAPIMiddleware)
