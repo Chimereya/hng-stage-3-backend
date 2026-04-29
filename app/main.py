@@ -8,7 +8,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-
+from .limiter import limiter
 from .database import engine
 from . import models, database
 from .routers import auth, profiles
@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 
-# Setting up the ratelimiter
-# Uses the caller's IP address as the key
-limiter = Limiter(key_func=get_remote_address)
+
 
 # Create tables on startup
 models.Base.metadata.create_all(bind=engine)
@@ -41,9 +39,13 @@ app.state.limiter = Limiter(key_func=get_remote_address)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://insighta-frontend-nu.vercel.app",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
 app.add_middleware(SlowAPIMiddleware)

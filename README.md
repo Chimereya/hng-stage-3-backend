@@ -1,7 +1,8 @@
-# Insighta Intelligence Engine
+# Insighta Labs+ Intelligence Engine Backend
 
 A queryable demographic intelligence API built with FastAPI and PostgreSQL (Neon).
 Clients can filter, sort, paginate, and query profiles using natural language.
+
 
 ---
 
@@ -18,6 +19,43 @@ Clients can filter, sort, paginate, and query profiles using natural language.
   data from Genderize, Agify, and Nationalize APIs
 - **2,026 Seeded Profiles** — pre-loaded demographic dataset ready to query
 
+
+## System Architecture
+### System Architecture
+```mermaid
+graph TD
+    User((User))
+    CLI[Python CLI]
+    Web[React Web Portal]
+    API[FastAPI Backend]
+    DB[(Database)]
+    GH{GitHub OAuth}
+
+    User --> CLI
+    User --> Web
+    CLI -->|OAuth + PKCE| GH
+    Web -->|OAuth + PKCE| GH
+    GH --> API
+    API --> DB
+    CLI -->|REST + Version Header| API
+    Web -->|REST + HttpOnly Cookies| API
+```
+
+Note:*This diagram represents the full Insighta ecosystem. This repository handles the Web portion of the architecture. I tried using <a href="https://mermaid.js.org" target="_blank" rel="noopener noreferrer">mermaid editor</a> to create this*
+
+
+#### The platform is split into three independent parts:
+
+GitHub OAuth -> FastAPI Backend (Python) -> Client:React Web Portal (this repo) and CLI
+
+
+
+
+- The **backend** handles all auth, data, and business logic
+- The **web portal** is a React SPA that talks to the backend via REST
+- The **CLI** (separate repo) shares the same backend
+- All three interfaces use one source of truth — the same database and API
+
 ## Tech Stack
 
 - **FastAPI** — API framework
@@ -28,34 +66,13 @@ Clients can filter, sort, paginate, and query profiles using natural language.
 
 ---
 
-## Project Structure
-
-### Updated stage 1 structure
-
-```
-hng-stage-2/
-├── app/
-│   ├── __init__.py
-│   ├── main.py          # App initialization & endpoints
-│   ├── parser.py        # Rule-based natural language query logic
-│   ├── models.py        # SQLAlchemy database models
-│   ├── schemas.py       # Pydantic validation models
-│   ├── services.py      # External API calls (genderize, agify, nationalize)
-│   └── database.py      # DB connection & session management
-├── seed.py              # One-time database seeding script
-├── seed_profiles.json   # 2026 seed profiles
-├── .env                 # Environment variables (not committed)
-└── requirements.txt
-```
-
----
 
 ## Setup & Installation
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/Chimereya/hng-stage-2.git
-cd hng-stage-2
+git clone https://github.com/Chimereya/hng-stage-3.git
+cd hng-stage-3
 ```
 
 ### 2. Create and activate virtual environment
@@ -71,7 +88,19 @@ pip install -r requirements.txt
 
 ### 4. Configure environment variables
 Create a `.env` file in the project root:
-Then add: DATABASE_URL=your_neon_postgresql_connection_string to it
+Then add the following: 
+
+DATABASE_URL=your_neon_postgresql_connection_string 
+
+GITHUB_CLIENT_ID=your_client_id
+GITHUB_CLIENT_SECRET=your_client_secret
+GITHUB_REDIRECT_URI=your_callback_uri
+# JWT
+JWT_SECRET=your_secret_key
+JWT_ALGORITHM=jwt_algorithm
+
+# App
+FRONTEND_URL=https://your_frontend_url.com
 
 ### 5. Seed the database
 ```bash

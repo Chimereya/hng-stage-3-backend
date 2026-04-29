@@ -3,6 +3,7 @@ import secrets
 import hashlib
 import base64
 from datetime import datetime, timezone, timedelta
+from ..limiter import limiter
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -73,6 +74,7 @@ def get_or_create_user(db: Session, github_user: dict) -> User:
 # ----------------------------------------------------------------
 
 @router.get("/github")
+@limiter.limit("10/minute")
 def github_login(
     request: Request,
     source: str = "web",
@@ -80,30 +82,22 @@ def github_login(
     code_challenge: str = None,
     db: Session = Depends(get_db)
 ):
-    limiter = request.app.state.limiter
-    limiter.limit("10/minute")(lambda: None)()
-
     final_state = state or secrets.token_urlsafe(32)
-
     if source == "web":
         code_verifier, challenge = generate_pkce_pair()
     else:
-        # CLI must send real challenge
         if not code_challenge:
             raise HTTPException(400, "code_challenge required for CLI")
         code_verifier = None
         challenge = code_challenge
-
     db.add(PendingState(
         state=final_state,
         code_verifier=code_verifier or "",
         source=source
     ))
     db.commit()
-
     auth_url = get_github_auth_url(final_state, challenge)
     return RedirectResponse(auth_url)
-
 
 
 @router.get("/github/callback")
@@ -156,14 +150,14 @@ async def github_callback(
         "access_token",
         access_token,
         httponly=True,
-        secure=True,
+        secure=False,
         samesite="lax"
     )
     response.set_cookie(
         "refresh_token",
         refresh_token,
         httponly=True,
-        secure=True,
+        secure=False,
         samesite="lax"
     )
     return response
@@ -171,12 +165,11 @@ async def github_callback(
 
 
 @router.post("/refresh")
+@limiter.limit("10/minute")
 async def refresh_tokens(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    limiter = request.app.state.limiter
-    limiter.limit("10/minute")(lambda: None)()
 
     refresh_token = request.cookies.get("refresh_token")
 
