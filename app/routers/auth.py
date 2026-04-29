@@ -64,7 +64,6 @@ def get_or_create_user(db: Session, github_user: dict) -> User:
 
 # ----------------------------------------------------------------
 # INITIATE GITHUB OAUTH
-# GET /auth/github
 # ----------------------------------------------------------------
 
 
@@ -82,10 +81,9 @@ def github_login(
     if source == "web":
         code_verifier, challenge = generate_pkce_pair()
     else:
-        # CLI provides its own code_challenge derived from its code_verifier
         if not code_challenge:
             raise HTTPException(400, "code_challenge required for CLI flow")
-        code_verifier = ""   # CLI holds verifier locally
+        code_verifier = ""
         challenge = code_challenge
 
     db.add(PendingState(
@@ -95,7 +93,9 @@ def github_login(
     ))
     db.commit()
 
-    auth_url = get_github_auth_url(final_state, challenge)
+    # Web: send code_challenge to GitHub for full PKCE
+    github_challenge = None if source == "cli" else challenge
+    auth_url = get_github_auth_url(final_state, github_challenge)
     return RedirectResponse(auth_url)
 
 # ----------------------------------------------------------------
