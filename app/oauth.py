@@ -95,6 +95,6 @@ async def get_github_user(access_token: str) -> dict:
     return {
         "github_id": str(user_data.get("id")),
         "username":  user_data.get("login"),
-        "email":     email or user_data.get("email"),
+        "email":  email or user_data.get("email"),
         "avatar_url": user_data.get("avatar_url"),
     }
