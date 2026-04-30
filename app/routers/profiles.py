@@ -180,7 +180,6 @@ def export_profiles(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_analyst),
     format: str = Query("csv"),
-    # Same filter/sort params as list_profiles (TRD requirement)
     gender: str = Query(None),
     age_group: str = Query(None),
     country_id: str = Query(None),
@@ -233,7 +232,7 @@ def export_profiles(
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode()),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
