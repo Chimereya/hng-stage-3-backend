@@ -6,7 +6,6 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from fastapi import Query
 from ..limiter import limiter
 from ..database import get_db
 from ..models import User, RefreshToken, PendingState
