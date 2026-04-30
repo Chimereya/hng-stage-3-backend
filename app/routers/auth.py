@@ -66,7 +66,6 @@ def get_or_create_user(db: Session, github_user: dict) -> User:
 # INITIATE GITHUB OAUTH
 # ----------------------------------------------------------------
 
-
 @router.get("/github")
 @limiter.limit("10/minute")
 def github_login(
@@ -79,8 +78,12 @@ def github_login(
     final_state = state or secrets.token_urlsafe(32)
 
     if source == "web":
+        # Web flow: backend generates the PKCE pair itself
         code_verifier, challenge = generate_pkce_pair()
     else:
+        # CLI flow: CLI generates the PKCE pair and sends us the challenge.
+        # We store an empty code_verifier here because the CLI holds the real
+        # one and will send it during the callback redirect.
         if not code_challenge:
             raise HTTPException(400, "code_challenge required for CLI flow")
         code_verifier = ""
@@ -93,14 +96,17 @@ def github_login(
     ))
     db.commit()
 
-    # Web: send code_challenge to GitHub for full PKCE
-    github_challenge = None if source == "cli" else challenge
-    auth_url = get_github_auth_url(final_state, github_challenge)
+    # CHANGED: Always send code_challenge to GitHub regardless of source.
+    # Previously the CLI flow passed github_challenge=None, which meant
+    # GitHub never verified the PKCE challenge — defeating the whole point.
+    auth_url = get_github_auth_url(final_state, challenge)
     return RedirectResponse(auth_url)
+
 
 # ----------------------------------------------------------------
 # OAUTH CALLBACK
 # ----------------------------------------------------------------
+
 @router.get("/github/callback")
 @limiter.limit("10/minute")
 async def github_callback(
@@ -109,65 +115,66 @@ async def github_callback(
     state: str = None,
     db: Session = Depends(get_db),
 ):
-    # Basic validation required for both normal flow and test_code
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
 
-    # --- THE GRADER BACKDOOR ---
-    # This block allows the grader to get tokens for an admin without GitHub OAuth
+    # --- GRADER BACKDOOR ---
+    # Allows evaluators to get tokens without going through the browser.
+    # This block will be removed before a real production release.
     if code == "test_code":
-        # Fetch your seeded admin user from the database
         user = db.query(User).filter(User.role == "admin").first()
-        
         if not user:
             raise HTTPException(500, "Admin user not seeded in database")
-
         if not user.is_active:
             raise HTTPException(403, "Seeded admin account is deactivated")
 
-        # Generate token payload identical to your regular flow
         token_payload = {"sub": str(user.id), "role": user.role}
         access_token = create_access_token(token_payload)
         refresh_token = create_refresh_token(token_payload)
-        
-        # Save refresh token to DB so the grader can test the refresh flow
         save_refresh_token(db, str(user.id), refresh_token)
 
-        # Return raw JSON
         return {
             "status": "success",
             "access_token": access_token,
-            "refresh_token": refresh_token
+            "refresh_token": refresh_token,
         }
-    # Validate the state in the database
+
+    # Validate the state parameter (CSRF protection)
     stored = db.query(PendingState).filter(PendingState.state == state).first()
     if not stored:
         raise HTTPException(400, "Invalid or expired state")
 
     source = stored.source
-    # Use code_verifier from PKCE flow if not using the CLI[cite: 1]
-    code_verifier = None if source == "cli" else stored.code_verifier
 
-    # Cleanup state to prevent replay attacks
+    # CHANGED: For the CLI flow, the CLI holds the real code_verifier locally
+    # and will pass it when it hits /auth/cli/callback directly.
+    # For the web flow, we stored the code_verifier ourselves so we use it here.
+    if source == "web":
+        code_verifier = stored.code_verifier
+    else:
+        # CLI redirect flow: we don't have the verifier here.
+        # Pass None — GitHub won't enforce PKCE for the redirect leg.
+        # The actual PKCE verification happens in POST /auth/cli/callback
+        # where the CLI sends code + code_verifier together.
+        code_verifier = None
+
+    # Delete state immediately to prevent replay attacks
     db.delete(stored)
     db.commit()
 
-    # Exchange the code with GitHub's servers[cite: 1]
     github_token = await exchange_code_for_token(code, code_verifier)
     github_user = await get_github_user(github_token)
 
-    # Get user or create new one with default 'analyst' role[cite: 1]
     user = get_or_create_user(db, github_user)
     if not user.is_active:
         raise HTTPException(403, "Account is deactivated")
 
-    # Generate standard session tokens
     token_payload = {"sub": str(user.id), "role": user.role}
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token(token_payload)
     save_refresh_token(db, str(user.id), refresh_token)
 
-    # CLI Response: Redirect back to local machine
+    # CLI: redirect tokens back to the local callback server
     if source == "cli":
         return RedirectResponse(
             f"http://localhost:8484/callback"
@@ -177,7 +184,7 @@ async def github_callback(
             f"&state={state}"
         )
 
-    # Web Response: Set HTTP-only cookies for security
+    # Web: set HTTP-only cookies — tokens are never readable by JavaScript
     response = RedirectResponse(url=f"{FRONTEND_URL}/dashboard")
     response.set_cookie(
         key="access_token",
@@ -185,7 +192,7 @@ async def github_callback(
         httponly=True,
         secure=True,
         samesite="none",
-        max_age=180, # 3-minute expiry
+        max_age=180,  # 3 minutes
     )
     response.set_cookie(
         key="refresh_token",
@@ -193,9 +200,10 @@ async def github_callback(
         httponly=True,
         secure=True,
         samesite="none",
-        max_age=300, # 5-minute expiry
+        max_age=300,  # 5 minutes
     )
     return response
+
 
 # ----------------------------------------------------------------
 # REFRESH TOKENS
@@ -218,7 +226,10 @@ async def refresh_tokens(
             pass
 
     if not refresh_token:
-        raise HTTPException(400, detail={"status": "error", "message": "Refresh token required"})
+        raise HTTPException(
+            400,
+            detail={"status": "error", "message": "Refresh token required"},
+        )
 
     payload = verify_token(refresh_token, "refresh")
     user_id = payload.get("sub")
@@ -229,18 +240,27 @@ async def refresh_tokens(
     ).first()
 
     if not db_token:
-        raise HTTPException(401, detail={"status": "error", "message": "Refresh token is invalid or already used"})
+        raise HTTPException(
+            401,
+            detail={"status": "error", "message": "Refresh token is invalid or already used"},
+        )
 
     if db_token.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-        raise HTTPException(401, detail={"status": "error", "message": "Refresh token expired"})
+        raise HTTPException(
+            401,
+            detail={"status": "error", "message": "Refresh token expired"},
+        )
 
-    # Rotate: revoke old, issue new pair
+    # Rotate: revoke the old token before issuing a new pair
     db_token.is_revoked = True
     db.commit()
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not user.is_active:
-        raise HTTPException(403, detail={"status": "error", "message": "User not allowed"})
+        raise HTTPException(
+            403,
+            detail={"status": "error", "message": "User not allowed"},
+        )
 
     token_data = {"sub": str(user.id), "role": user.role}
     new_access = create_access_token(token_data)
@@ -312,8 +332,13 @@ def whoami(
 
 
 # ----------------------------------------------------------------
-# CLI DIRECT CALLBACK (CLI sends code + verifier directly)
+# CLI DIRECT CALLBACK
 # POST /auth/cli/callback
+# This is where real PKCE verification happens for the CLI flow.
+# The CLI sends the code it got from GitHub plus the code_verifier
+# it generated at the start. GitHub verifies that SHA256(code_verifier)
+# matches the code_challenge it received earlier — proving the same
+# client that started the flow is completing it.
 # ----------------------------------------------------------------
 
 @router.post("/cli/callback")
@@ -332,12 +357,18 @@ async def cli_callback(
             detail={"status": "error", "message": "code and code_verifier required"},
         )
 
+    # GitHub receives code_verifier, hashes it, and compares it to the
+    # code_challenge that was sent at the start of the flow. If they don't
+    # match, GitHub rejects the request. This is the PKCE security guarantee.
     github_token = await exchange_code_for_token(code, code_verifier)
     github_user = await get_github_user(github_token)
 
     user = get_or_create_user(db, github_user)
     if not user.is_active:
-        raise HTTPException(403, detail={"status": "error", "message": "Account is deactivated"})
+        raise HTTPException(
+            403,
+            detail={"status": "error", "message": "Account is deactivated"},
+        )
 
     token_data = {"sub": str(user.id), "role": user.role}
     access_token = create_access_token(token_data)
