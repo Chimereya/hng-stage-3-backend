@@ -11,6 +11,7 @@ The core API powering the Insighta Labs+ Profile Intelligence Platform.
 
 - **Backend API:**[ [https://hng-stage-3-backend.vercel.app](https://hng-stage-3-backend.vercel.app/)]
 - **Web Portal:** [https://insighta-frontend-nu.vercel.app](https://insighta-frontend-nu.vercel.app/)
+- **CLI Repo:** https://github.com/Chimereya/hng-stage-3-cli
 
 ---
 
@@ -111,11 +112,19 @@ Roles are enforced via FastAPI dependencies:
 
 If `is_active = false`, the user receives `403 Forbidden` on all requests.
 
+
 > **To grant admin access**, update directly in the database:
 > ```sql
 > UPDATE users SET role = 'admin' WHERE username = 'github-username';
 > ```
 
+## CSV export
+`GET /api/profiles/export?format=csv` accepts the same filter and sort parameters as `GET /api/profiles`. The response:
+
+`Content-Type: text/csv`
+`Content-Disposition: attachment; filename="profiles_<timestamp>.csv"`
+
+Columns (in order): `id`, `name`, `gender`, `gender_probability`, `age`, `age_group`, `country_id`, `country_name`, `country_probability`, `created_at`.
 ---
 
 ## API Reference
