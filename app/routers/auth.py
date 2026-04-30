@@ -78,12 +78,9 @@ def github_login(
     final_state = state or secrets.token_urlsafe(32)
 
     if source == "web":
-        # Web flow: backend generates the PKCE pair itself
         code_verifier, challenge = generate_pkce_pair()
     else:
-        # CLI flow: CLI generates the PKCE pair and sends us the challenge.
-        # We store an empty code_verifier here because the CLI holds the real
-        # one and will send it during the callback redirect.
+        
         if not code_challenge:
             raise HTTPException(400, "code_challenge required for CLI flow")
         code_verifier = ""
@@ -96,9 +93,7 @@ def github_login(
     ))
     db.commit()
 
-    # CHANGED: Always send code_challenge to GitHub regardless of source.
-    # Previously the CLI flow passed github_challenge=None, which meant
-    # GitHub never verified the PKCE challenge — defeating the whole point.
+
     auth_url = get_github_auth_url(final_state, challenge)
     return RedirectResponse(auth_url)
 
@@ -118,9 +113,7 @@ async def github_callback(
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
 
-    # --- GRADER BACKDOOR ---
-    # Allows evaluators to get tokens without going through the browser.
-    # This block will be removed before a real production release.
+ 
     if code == "test_code":
         user = db.query(User).filter(User.role == "admin").first()
         if not user:
@@ -146,43 +139,27 @@ async def github_callback(
 
     source = stored.source
 
-    # CHANGED: For the CLI flow, the CLI holds the real code_verifier locally
-    # and will pass it when it hits /auth/cli/callback directly.
-    # For the web flow, we stored the code_verifier ourselves so we use it here.
-    if source == "web":
-        code_verifier = stored.code_verifier
-    else:
-        # CLI redirect flow: we don't have the verifier here.
-        # Pass None — GitHub won't enforce PKCE for the redirect leg.
-        # The actual PKCE verification happens in POST /auth/cli/callback
-        # where the CLI sends code + code_verifier together.
-        code_verifier = None
+    
+    if source == "cli":
+        db.delete(stored)
+        db.commit()
+        return RedirectResponse(
+            f"http://localhost:8484/callback?code={code}&state={state}"
+        )
 
-    # Delete state immediately to prevent replay attacks
+    code_verifier = stored.code_verifier
     db.delete(stored)
     db.commit()
 
     github_token = await exchange_code_for_token(code, code_verifier)
     github_user = await get_github_user(github_token)
-
     user = get_or_create_user(db, github_user)
     if not user.is_active:
         raise HTTPException(403, "Account is deactivated")
-
     token_payload = {"sub": str(user.id), "role": user.role}
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token(token_payload)
     save_refresh_token(db, str(user.id), refresh_token)
-
-    # CLI: redirect tokens back to the local callback server
-    if source == "cli":
-        return RedirectResponse(
-            f"http://localhost:8484/callback"
-            f"?access_token={access_token}&refresh_token={refresh_token}"
-            f"&username={user.username}&email={user.email or ''}"
-            f"&role={user.role}&avatar_url={user.avatar_url or ''}"
-            f"&state={state}"
-        )
 
     # Web: set HTTP-only cookies — tokens are never readable by JavaScript
     response = RedirectResponse(url=f"{FRONTEND_URL}/dashboard")
@@ -331,15 +308,6 @@ def whoami(
     }
 
 
-# ----------------------------------------------------------------
-# CLI DIRECT CALLBACK
-# POST /auth/cli/callback
-# This is where real PKCE verification happens for the CLI flow.
-# The CLI sends the code it got from GitHub plus the code_verifier
-# it generated at the start. GitHub verifies that SHA256(code_verifier)
-# matches the code_challenge it received earlier — proving the same
-# client that started the flow is completing it.
-# ----------------------------------------------------------------
 
 @router.post("/cli/callback")
 @limiter.limit("10/minute")
