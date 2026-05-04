@@ -1,10 +1,12 @@
 import csv
 import io
+import codecs
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ..database import get_db
 from ..limiter import limiter
@@ -13,6 +15,8 @@ from ..schemas import ProfileCreate
 from ..services import get_profile_intelligence
 from ..parser import parse_query
 from ..dependencies import require_admin, require_analyst, require_api_version
+from ..cache import cache_get, cache_set, cache_invalidate_all, make_cache_key, normalize_filters
+from uuid6 import uuid7
 
 router = APIRouter(
     prefix="/api",
@@ -22,6 +26,12 @@ router = APIRouter(
 
 VALID_SORT_FIELDS = ["age", "created_at", "gender_probability"]
 VALID_ORDERS = ["asc", "desc"]
+
+
+CSV_CHUNK_SIZE = 500
+
+VALID_GENDERS = {"male", "female"}
+VALID_AGE_GROUPS = {"child", "teenager", "adult", "senior"}
 
 
 # ----------------------------------------------------------------
@@ -82,10 +92,78 @@ def apply_sorting(query, sort_by=None, order="desc"):
     return query
 
 
-# ----------------------------------------------------------------
-# CREATE PROFILE — admin only
-# POST /api/profiles
-# ----------------------------------------------------------------
+
+
+REQUIRED_FIELDS = {
+    "name", "gender", "gender_probability",
+    "age", "age_group", "country_id", "country_name", "country_probability"
+}
+
+
+def validate_csv_row(row: dict) -> dict:
+    """
+    Validate and clean a single CSV row.
+    Raises ValueError with a string reason key on any failure.
+    Returns a clean dict ready for insertion on success.
+    """
+    # Check required fields present and non-empty
+    for field in REQUIRED_FIELDS:
+        if field not in row or row[field].strip() == "":
+            raise ValueError("missing_fields")
+
+    name = row["name"].strip().lower()
+    if not name:
+        raise ValueError("missing_fields")
+
+    gender = row["gender"].strip().lower()
+    if gender not in VALID_GENDERS:
+        raise ValueError("invalid_gender")
+
+    try:
+        age = int(row["age"].strip())
+        if age < 0 or age > 150:
+            raise ValueError("invalid_age")
+    except (ValueError, TypeError):
+        raise ValueError("invalid_age")
+
+    age_group = row["age_group"].strip().lower()
+    if age_group not in VALID_AGE_GROUPS:
+        raise ValueError("invalid_age_group")
+
+    try:
+        gender_probability = float(row["gender_probability"].strip())
+        if not (0.0 <= gender_probability <= 1.0):
+            raise ValueError("invalid_gender_probability")
+    except (ValueError, TypeError):
+        raise ValueError("invalid_gender_probability")
+
+    try:
+        country_probability = float(row["country_probability"].strip())
+        if not (0.0 <= country_probability <= 1.0):
+            raise ValueError("invalid_country_probability")
+    except (ValueError, TypeError):
+        raise ValueError("invalid_country_probability")
+
+    country_id = row["country_id"].strip().upper()
+    if len(country_id) != 2:
+        raise ValueError("invalid_country_id")
+
+    country_name = row["country_name"].strip()
+    if not country_name:
+        raise ValueError("missing_fields")
+
+    return {
+        "name": name,
+        "gender": gender,
+        "gender_probability": gender_probability,
+        "age": age,
+        "age_group": age_group,
+        "country_id": country_id,
+        "country_name": country_name,
+        "country_probability": country_probability,
+    }
+
+
 
 @router.post("/profiles", status_code=201)
 @limiter.limit("60/minute")
@@ -114,13 +192,11 @@ async def create_profile(
     db.commit()
     db.refresh(profile)
 
+    # Invalidate cache so new profile appears in list/search results
+    cache_invalidate_all()
+
     return {"status": "success", "data": serialize_profile(profile)}
 
-
-# ----------------------------------------------------------------
-# LIST PROFILES
-# GET /api/profiles
-# ----------------------------------------------------------------
 
 @router.get("/profiles")
 @limiter.limit("60/minute")
@@ -140,24 +216,31 @@ def list_profiles(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
 ):
+    raw_filters = {
+        "gender": gender,
+        "age_group": age_group,
+        "country_id": country_id,
+        "min_age": min_age,
+        "max_age": max_age,
+        "min_gender_probability": min_gender_probability,
+        "min_country_probability": min_country_probability,
+    }
+
+    # Normalize filters and check cache before hitting DB
+    cache_key = make_cache_key("list_profiles", raw_filters, page, limit)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     query = db.query(Profile)
-    query = apply_filters(
-        query,
-        gender=gender,
-        age_group=age_group,
-        country_id=country_id,
-        min_age=min_age,
-        max_age=max_age,
-        min_gender_probability=min_gender_probability,
-        min_country_probability=min_country_probability,
-    )
+    query = apply_filters(query, **raw_filters)
     query = apply_sorting(query, sort_by, order)
 
     total = query.count()
     profiles = query.offset((page - 1) * limit).limit(limit).all()
     total_pages = (total + limit - 1) // limit
 
-    return {
+    result = {
         "status": "success",
         "page": page,
         "limit": limit,
@@ -167,11 +250,10 @@ def list_profiles(
         "data": [serialize_profile(p) for p in profiles],
     }
 
+    cache_set(cache_key, result)
+    return result
 
-# ----------------------------------------------------------------
-# EXPORT CSV  (must come BEFORE /{profile_id} to avoid route clash)
-# GET /api/profiles/export
-# ----------------------------------------------------------------
+
 
 @router.get("/profiles/export")
 @limiter.limit("60/minute")
@@ -236,10 +318,6 @@ def export_profiles(
     )
 
 
-# ----------------------------------------------------------------
-# SEARCH
-# GET /api/profiles/search
-# ----------------------------------------------------------------
 
 @router.get("/profiles/search")
 @limiter.limit("60/minute")
@@ -257,21 +335,26 @@ def search_profiles(
             detail={"status": "error", "message": "Invalid query parameters"},
         )
 
-    filters = parse_query(q.strip())
-    if not filters:
+    raw_filters = parse_query(q.strip())
+    if not raw_filters:
         raise HTTPException(
             status_code=422,
             detail={"status": "error", "message": "Unable to interpret query"},
         )
 
+    cache_key = make_cache_key("search_profiles", raw_filters, page, limit)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     query = db.query(Profile)
-    query = apply_filters(query, **filters)
+    query = apply_filters(query, **raw_filters)
 
     total = query.count()
     profiles = query.offset((page - 1) * limit).limit(limit).all()
     total_pages = (total + limit - 1) // limit
 
-    return {
+    result = {
         "status": "success",
         "page": page,
         "limit": limit,
@@ -281,11 +364,10 @@ def search_profiles(
         "data": [serialize_profile(p) for p in profiles],
     }
 
+    cache_set(cache_key, result)
+    return result
 
-# ----------------------------------------------------------------
-# GET ONE
-# GET /api/profiles/{profile_id}
-# ----------------------------------------------------------------
+
 
 @router.get("/profiles/{profile_id}")
 @limiter.limit("60/minute")
@@ -304,10 +386,7 @@ def get_profile(
     return {"status": "success", "data": serialize_profile(profile)}
 
 
-# ----------------------------------------------------------------
-# DELETE — admin only
-# DELETE /api/profiles/{profile_id}
-# ----------------------------------------------------------------
+
 
 @router.delete("/profiles/{profile_id}", status_code=204)
 @limiter.limit("60/minute")
@@ -325,4 +404,109 @@ def delete_profile(
         )
     db.delete(profile)
     db.commit()
+
+    cache_invalidate_all()
     return None
+
+
+
+
+@router.post("/profiles/upload", status_code=200)
+@limiter.limit("5/minute")
+async def upload_profiles_csv(
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail={"status": "error", "message": "Only .csv files are accepted"},
+        )
+
+    total_rows = 0
+    inserted = 0
+    skip_reasons: dict[str, int] = {}
+
+    def record_skip(reason: str):
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+
+    def record_skip_n(reason: str, n: int):
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + n
+
+    chunk: list[dict] = []
+
+    def flush_chunk():
+        
+        nonlocal inserted
+        if not chunk:
+            return
+        attempted = len(chunk)
+        stmt = pg_insert(Profile).values(chunk)
+        stmt = stmt.on_conflict_do_nothing(index_elements=["name"])
+        result = db.execute(stmt)
+        db.commit()
+        actually_inserted = result.rowcount
+        inserted += actually_inserted
+        duplicates = attempted - actually_inserted
+        if duplicates > 0:
+            record_skip_n("duplicate_name", duplicates)
+        chunk.clear()
+
+  
+    try:
+        stream = codecs.getreader("utf-8")(file.file, errors="replace")
+        reader = csv.DictReader(stream)
+
+        for row in reader:
+            total_rows += 1
+
+            # Skip malformed rows (wrong column count produces None keys)
+            if None in row or None in row.values():
+                record_skip("malformed_row")
+                continue
+
+            try:
+                clean = validate_csv_row(row)
+            except ValueError as e:
+                record_skip(str(e))
+                continue
+
+            # Add generated fields before queuing for insert
+            clean["id"] = str(uuid7())
+            clean["created_at"] = datetime.now(timezone.utc)
+
+            chunk.append(clean)
+
+            if len(chunk) >= CSV_CHUNK_SIZE:
+                flush_chunk()
+
+        flush_chunk()
+
+    except Exception as e:
+        
+        return JSONResponse(
+            status_code=207,
+            content={
+                "status": "partial",
+                "message": f"Upload interrupted: {str(e)}",
+                "total_rows": total_rows,
+                "inserted": inserted,
+                "skipped": total_rows - inserted - sum(skip_reasons.values()),
+                "reasons": skip_reasons,
+            },
+        )
+    finally:
+        await file.close()
+
+    skipped = sum(skip_reasons.values())
+    cache_invalidate_all()
+
+    return {
+        "status": "success",
+        "total_rows": total_rows,
+        "inserted": inserted,
+        "skipped": skipped,
+        "reasons": skip_reasons,
+    }
