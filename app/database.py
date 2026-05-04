@@ -17,19 +17,18 @@ if DATABASE_URL.startswith("sqlite"):
         connect_args={"check_same_thread": False},
     )
 else:
+   
     engine = create_engine(
         DATABASE_URL,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=2,
+        max_overflow=5,
         pool_timeout=30,
         pool_recycle=1800,
         pool_pre_ping=True,
     )
 
-
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not set in your .env file")
-
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
