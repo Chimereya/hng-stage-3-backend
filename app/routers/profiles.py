@@ -15,7 +15,7 @@ from ..schemas import ProfileCreate
 from ..services import get_profile_intelligence
 from ..parser import parse_query
 from ..dependencies import require_admin, require_analyst, require_api_version
-from ..cache import cache_get, cache_set, cache_invalidate_all, make_cache_key, normalize_filters
+from ..cache import cache_get, cache_set, cache_invalidate_all, make_cache_key
 from uuid6 import uuid7
 
 router = APIRouter(
