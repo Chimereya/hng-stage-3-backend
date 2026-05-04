@@ -30,10 +30,14 @@ class Profile(Base):
     )
 
     __table_args__ = (
-        Index("ix_profiles_gender_country", "gender", "country_id"),
-        Index("ix_profiles_age_group", "age_group"),
-        Index("ix_profiles_age", "age"),
-    )
+    Index("ix_profiles_gender_country", "gender", "country_id"),
+    Index("ix_profiles_age_group", "age_group"),
+    Index("ix_profiles_age", "age"),
+    Index("ix_profiles_gender_age", "gender", "age"),
+    Index("ix_profiles_gender_age_group", "gender", "age_group"),
+    Index("ix_profiles_country_age", "country_id", "age"),
+    Index("ix_profiles_created_at", "created_at"),
+) 
 
 
 class User(Base):
