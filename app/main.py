@@ -20,57 +20,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create tables on startup
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Insighta Labs+")
-
 
 origins = [
     "https://insighta-frontend-nu.vercel.app",
     "http://localhost:3000",
 ]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
-)
-
-app.add_middleware(SlowAPIMiddleware)
-
-
 # ----------------------------------------------------------------
-# RATE LIMITER
-# ----------------------------------------------------------------
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
-    status_code=429,
-    content={"status": "error", "message": "Too many requests. Please slow down."},
-))
-
-
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    start_time = time.time()
-    try:
-        response = await call_next(request)
-    except Exception as e:
-        logger.error(f"{request.method} {request.url.path} → ERROR {e}")
-        raise
-    duration = round((time.time() - start_time) * 1000, 2)
-    logger.info(
-        f"{request.method} {request.url.path} "
-        f"→ {response.status_code} ({duration}ms)"
-    )
-    return response
-
-# ----------------------------------------------------------------
-# EXCEPTION HANDLERS
+# EXCEPTION HANDLERS  (register before middleware)
 # ----------------------------------------------------------------
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -101,6 +61,48 @@ async def general_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"status": "error", "message": "Internal server error"},
     )
+
+# ----------------------------------------------------------------
+# RATE LIMITER STATE
+# ----------------------------------------------------------------
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
+    status_code=429,
+    content={"status": "error", "message": "Too many requests. Please slow down."},
+))
+
+# ----------------------------------------------------------------
+# MIDDLEWARE  — order matters: last added = first executed
+# ----------------------------------------------------------------
+
+# 1. HTTP logger — added first, so it runs last (innermost)
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        logger.error(f"{request.method} {request.url.path} → ERROR {e}")
+        raise
+    duration = round((time.time() - start_time) * 1000, 2)
+    logger.info(
+        f"{request.method} {request.url.path} "
+        f"→ {response.status_code} ({duration}ms)"
+    )
+    return response
+
+# 2. Rate limiter — added second
+app.add_middleware(SlowAPIMiddleware)
+
+# 3. CORS — added LAST so it executes FIRST, wrapping every response
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 # ----------------------------------------------------------------
 # ROUTERS
