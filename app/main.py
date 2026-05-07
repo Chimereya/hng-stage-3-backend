@@ -25,14 +25,6 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Insighta Labs+")
 
-# ----------------------------------------------------------------
-# RATE LIMITER
-# ----------------------------------------------------------------
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
-    status_code=429,
-    content={"status": "error", "message": "Too many requests. Please slow down."},
-))
 
 # ----------------------------------------------------------------
 # MIDDLEWARE
@@ -45,6 +37,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SlowAPIMiddleware)
+
+# ----------------------------------------------------------------
+# RATE LIMITER
+# ----------------------------------------------------------------
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
+    status_code=429,
+    content={"status": "error", "message": "Too many requests. Please slow down."},
+))
+
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
