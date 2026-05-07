@@ -22,18 +22,26 @@ graph TD
     User((User))
     CLI[Python CLI]
     Web[React Web Portal]
-    API[FastAPI Backend]
-    DB[(Database)]
+    Seed[Batch Ingestion]
+    API[FastAPI on Vercel]
+    Cache[Query Cache TTL 60s]
+    Pool[PgBouncer Pooler]
+    DB[(Neon PostgreSQL)]
     GH{GitHub OAuth}
 
     User --> CLI
     User --> Web
     CLI -->|OAuth + PKCE| GH
     Web -->|OAuth + PKCE| GH
-    GH --> API
-    API --> DB
+    GH -->|access token| CLI
+    GH -->|access token| Web
     CLI -->|REST + Version Header| API
     Web -->|REST + HttpOnly Cookies| API
+    API -->|token exchange| GH
+    API --> Cache
+    Cache -->|miss| Pool
+    Pool --> DB
+    Seed -->|bulk write| DB
 ```
 
 Note:*This diagram represents the full Insighta ecosystem. This repository handles the Web portion of the architecture. I tried using <a href="https://mermaid.js.org" target="_blank" rel="noopener noreferrer">mermaid editor</a> to create this*
