@@ -26,17 +26,22 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Insighta Labs+")
 
 
-# ----------------------------------------------------------------
-# MIDDLEWARE
-# ----------------------------------------------------------------
+origins = [
+    "https://insighta-frontend-nu.vercel.app",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://insighta-frontend-nu.vercel.app"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
+
 app.add_middleware(SlowAPIMiddleware)
+
 
 # ----------------------------------------------------------------
 # RATE LIMITER
